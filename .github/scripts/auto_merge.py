@@ -24,6 +24,7 @@ import subprocess
 import sys
 
 CODEX_BOT = "chatgpt-codex-connector[bot]"
+ACTIONS_BOT = "github-actions[bot]"
 CODEX_STATE_RE = re.compile(r"<!-- codex-review-state:v1 (\{.*?\}) -->", re.DOTALL)
 AUTO_LABEL = "merge:auto"
 TEST_CHECK = "test"
@@ -34,7 +35,6 @@ MARKER_RE = re.compile(
     r"<!-- auto-merge-check sha=(\w+) result=(\w+)(?: verdict=([\w-]+) mode=([\w-]+))? -->"
 )
 # 変えていたら人が見る（ルール、設定、CI、依存）
-CAREFUL_PREFIXES = (".github/", ".claude/", ".env")
 # 依存のファイルは、型（python-cli、web）のものをまとめて見る
 CAREFUL_NAMES = {
     "pyproject.toml",
@@ -166,8 +166,24 @@ def changed_paths(files: list) -> list[str]:
     return paths
 
 
+def is_careful(path: str) -> bool:
+    """ルール、設定、CI、依存のファイルか。下の階層にあるものも含める。
+
+    下の階層の CLAUDE.md や .claude/ もエージェントのルールとして読まれ、
+    package.json なども依存になるため。
+    """
+    parts = path.split("/")
+    name = parts[-1]
+    return (
+        path.startswith(".github/")
+        or ".claude" in parts[:-1]
+        or name in CAREFUL_NAMES
+        or name.startswith(".env")
+    )
+
+
 def careful_files(files: list[str]) -> list[str]:
-    return [f for f in files if f.startswith(CAREFUL_PREFIXES) or f in CAREFUL_NAMES]
+    return [f for f in files if is_careful(f)]
 
 
 def judge(facts: dict) -> tuple[str, list[str]]:
@@ -264,13 +280,23 @@ def collect(repo: str, owner: str, pr: dict) -> tuple[int | None, dict | None]:
     return number, facts
 
 
+def markers(comments: list):
+    """GitHub Actions（このワークフロー）が書いた判定のコメントの印。
+
+    ほかのアカウントが印を書いても、判定やマージの記録として扱わない（偽の印で止めたり、飛ばしたりできないように）。
+    """
+    for c in comments:
+        if (c.get("user") or {}).get("login") != ACTIONS_BOT:
+            continue
+        yield from MARKER_RE.finditer(c.get("body") or "")
+
+
 def last_marker(comments: list, sha: str) -> re.Match | None:
     """このコミットへの最後の判定のコメントの印。"""
     last = None
-    for c in comments:
-        for m in MARKER_RE.finditer(c.get("body") or ""):
-            if m.group(1) == sha:
-                last = m
+    for m in markers(comments):
+        if m.group(1) == sha:
+            last = m
     return last
 
 
@@ -293,11 +319,7 @@ def merge_failed(comments: list, sha: str) -> bool:
 
     最後の判定だけでなく、そのコミットへのすべての判定を見る（失敗の後に別の判定が出ることがあるため）。
     """
-    for c in comments:
-        for m in MARKER_RE.finditer(c.get("body") or ""):
-            if m.group(1) == sha and m.group(3) == "error":
-                return True
-    return False
+    return any(m.group(1) == sha and m.group(3) == "error" for m in markers(comments))
 
 
 def gh(*args: str) -> None:
@@ -359,8 +381,13 @@ def main() -> int:
     repo = os.environ["REPO"]
     owner = repo.split("/", 1)[0]
     agent = os.environ["AGENT_ACCOUNT"]
+    default_branch = gh_api(f"repos/{repo}")["default_branch"]
     for pr in gh_api(f"repos/{repo}/pulls?state=open&per_page=100"):
         if pr["user"]["login"] != agent or pr.get("draft"):
+            continue
+        if (pr.get("base") or {}).get("ref") != default_branch:
+            # main 以外へのマージで Issue を閉じると、main に入っていないのに完了扱いになる
+            print(f"PR #{pr['number']}: マージ先が {default_branch} ではないので対象外")
             continue
         number, facts = collect(repo, owner, pr)
         if facts is None:
