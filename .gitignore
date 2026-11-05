@@ -1,0 +1,5 @@
+# macOS の Finder が自動生成するファイル
+.DS_Store
+
+# エージェントの PR 本文やコメントの下書き
+.agent-tmp/

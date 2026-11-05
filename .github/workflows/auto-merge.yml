@@ -1,0 +1,48 @@
+# エージェントの PR が自動マージの条件を満たしているかを判定する（agent-env の PLAN.md「自動マージの方式」）。
+# リポジトリの変数 AUTO_MERGE が on なら、条件を満たした PR を承認してマージする。未設定か dry-run なら、
+# 判定の結果を PR にコメントするだけ（試運転）。止めるときは off にする（Settings → Secrets and variables → Actions → Variables）。
+# 承認には、Settings → Actions → General の「Allow GitHub Actions to create and approve pull requests」が要る。
+#
+# PR のブランチのコードを動かさないよう、main で動くきっかけ（定期、手動、テストの完了、コメント）だけを使う。
+name: 自動マージの判定
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["テスト"]
+    types: [completed]
+  issue_comment:
+    # Codex は「レビュー中」のコメントを書き、終わるとそれを書き換えて結果を入れるので、書き換えでも動かす
+    types: [created, edited]
+
+permissions:
+  contents: write # マージ
+  issues: write # マージ後に Issue の agent:* のラベルを外す
+  pull-requests: write
+  checks: read
+
+concurrency:
+  group: auto-merge
+  cancel-in-progress: false
+
+jobs:
+  judge:
+    # コメントのきっかけは、PR への Codex のコメントだけ
+    if: >-
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: 判定する
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          AGENT_ACCOUNT: ${{ vars.AGENT_ACCOUNT || 'nosuke223-agent' }}
+          AUTO_MERGE: ${{ vars.AUTO_MERGE }}
+        run: python3 .github/scripts/auto_merge.py

@@ -1,0 +1,24 @@
+# Issue が閉じたら、agent:* のラベルを外す（進捗を表すラベルなので、閉じた後は不要）
+name: エージェントのラベルを外す
+
+on:
+  issues:
+    types: [closed]
+
+permissions:
+  issues: write
+
+jobs:
+  remove-agent-labels:
+    runs-on: ubuntu-latest
+    steps:
+      - name: agent:* のラベルを外す
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: |
+          echo "$LABELS" | jq -r '.[] | select(startswith("agent:"))' | while read -r label; do
+            gh issue edit "$NUMBER" --repo "$REPO" --remove-label "$label"
+          done
