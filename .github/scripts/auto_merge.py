@@ -79,6 +79,20 @@ def issue_number_of(branch: str, closing: list[int]) -> int | None:
     return int(m.group(1))
 
 
+def closing_numbers(refs: list, repo: str) -> list[int]:
+    """PR が閉じる Issue の番号。別のリポジトリの Issue は -1 にする。
+
+    番号だけで、このリポジトリの Issue と取り違えないようにするため。
+
+    -1 が混ざると issue_number_of が「1件だけ」を満たさないので、その PR は対象外になる。
+    """
+    numbers = []
+    for ref in refs:
+        name = ((ref.get("repository") or {}).get("nameWithOwner") or "").lower()
+        numbers.append(ref["number"] if name == repo.lower() else -1)
+    return numbers
+
+
 def label_added_by(events: list, label: str) -> str | None:
     """ラベルを最後に付けたアカウント。今付いているかは呼び出し側で確かめる。"""
     actor = None
@@ -241,7 +255,7 @@ CLOSING_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      closingIssuesReferences(first: 10) { nodes { number } }
+      closingIssuesReferences(first: 10) { nodes { number repository { nameWithOwner } } }
     }
   }
 }
@@ -253,8 +267,7 @@ def collect(repo: str, owner: str, pr: dict) -> tuple[int | None, dict | None]:
     name = repo.split("/", 1)[1]
     data = gh_graphql(CLOSING_QUERY, owner=owner, name=name, number=pr["number"])
     refs = data["repository"]["pullRequest"]["closingIssuesReferences"]["nodes"]
-    closing = [n["number"] for n in refs]
-    number = issue_number_of(pr["head"]["ref"], closing)
+    number = issue_number_of(pr["head"]["ref"], closing_numbers(refs, repo))
     if number is None:
         return None, None
     issue = gh_api(f"repos/{repo}/issues/{number}")
@@ -408,12 +421,61 @@ def main() -> int:
                 print(f"PR #{pr['number']}: マージに失敗しました: {error}")
                 comment(repo, pr["number"], comment_body("error", [error], sha, mode))
                 continue
-            comment(repo, pr["number"], comment_body("ok", [], sha, mode))
-            close_issue(repo, number)
-            delete_branch(repo, pr["head"]["ref"])
+            finish_merged(repo, pr["number"], number, pr["head"]["ref"], sha, mode)
             continue
         comment(repo, pr["number"], comment_body(verdict, reasons, sha, mode))
+    if mode == "on":
+        retry_unfinished(repo, agent, default_branch)
     return 0
+
+
+def finish_merged(repo: str, pr: int, issue: int, branch: str, sha: str, mode: str) -> None:
+    """マージの後片付け（コメント、Issue を閉じる、ブランチを消す）。1つが失敗しても残りを行う。
+
+    失敗して残ったものは、次の回の retry_unfinished がやり直す。
+    """
+    steps = [
+        ("コメント", lambda: comment(repo, pr, comment_body("ok", [], sha, mode))),
+        ("Issue を閉じる", lambda: close_issue(repo, issue)),
+        ("ブランチを消す", lambda: delete_branch(repo, branch)),
+    ]
+    for name, step in steps:
+        try:
+            step()
+        except subprocess.CalledProcessError as e:
+            print(f"PR #{pr}: マージの後の「{name}」に失敗しました（次の回にやり直す）: {e.stderr}")
+
+
+def retry_unfinished(repo: str, agent: str, default_branch: str) -> None:
+    """GitHub Actions がマージしたのに、Issue が開いたままの PR の後片付けをやり直す。
+
+    マージした回の後片付けが一時的なエラーで失敗すると、PR はもう開いていないので、
+    上の判定の流れでは二度と見ない。最近閉じた PR から探す。
+    """
+    recent = gh_api(f"repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=20")
+    for pr in recent:
+        if not pr.get("merged_at") or pr["user"]["login"] != agent:
+            continue
+        if (pr.get("base") or {}).get("ref") != default_branch:
+            continue
+        m = re.match(r"issue-(\d+)-", pr["head"]["ref"])
+        if not m or gh_api(f"repos/{repo}/issues/{m.group(1)}").get("state") != "open":
+            continue
+        detail = gh_api(f"repos/{repo}/pulls/{pr['number']}")
+        if (detail.get("merged_by") or {}).get("login") != ACTIONS_BOT:
+            continue  # 人がマージしたものは、人が判断する
+        owner, name = repo.split("/", 1)
+        data = gh_graphql(CLOSING_QUERY, owner=owner, name=name, number=pr["number"])
+        refs = data["repository"]["pullRequest"]["closingIssuesReferences"]["nodes"]
+        number = issue_number_of(pr["head"]["ref"], closing_numbers(refs, repo))
+        if number is None:
+            continue
+        print(f"PR #{pr['number']}: マージ済みで Issue #{number} が開いたまま。後片付けをやり直す")
+        try:
+            close_issue(repo, number)
+        except subprocess.CalledProcessError as e:
+            print(f"PR #{pr['number']}: Issue を閉じられませんでした: {e.stderr}")
+        delete_branch(repo, pr["head"]["ref"])
 
 
 def comment(repo: str, pr: int, body: str) -> None:
