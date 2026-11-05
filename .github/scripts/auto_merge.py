@@ -357,28 +357,29 @@ def approve_and_merge(repo: str, pr: int, sha: str) -> None:
     gh("pr", "merge", str(pr), "-R", repo, "--merge", "--match-head-commit", sha)
 
 
-def delete_branch(repo: str, branch: str) -> None:
-    """マージした PR のブランチを消す。
+def delete_branch(repo: str, branch: str) -> bool:
+    """マージした PR のブランチを消す。消えていれば（人が先に消したなども）True。
 
     Actions のトークンでマージすると、リポジトリの「マージ後にブランチを消す」設定が働かないため。
-    消せなくても（人が先に消したなど）、マージは済んでいるので続ける。
     """
-    subprocess.run(
+    result = subprocess.run(
         ["gh", "api", "-X", "DELETE", f"repos/{repo}/git/refs/heads/{branch}"],
         capture_output=True,
         text=True,
     )
+    return result.returncode == 0 or "Reference does not exist" in (result.stderr or "")
 
 
 def close_issue(repo: str, issue: int) -> None:
-    """Issue を「完了」で閉じ、agent:* のラベルを外す。
+    """Issue を「完了」で閉じ、agent:* のラベルを外す。閉じていれば、ラベルだけ外す。
 
     Actions のトークンでマージすると、PR の `Closes` があっても Issue は閉じない。
     閉じたことも別の Actions に届かず、いつもラベルを外す「エージェントのラベルを外す」も動かない。
     そのため、ここで両方を行う。「完了」で閉じるのは、ランナーが着手の条件を「済み」と読むため。
     """
-    gh("issue", "close", str(issue), "-R", repo, "--reason", "completed")
     data = gh_api(f"repos/{repo}/issues/{issue}")
+    if data.get("state") == "open":
+        gh("issue", "close", str(issue), "-R", repo, "--reason", "completed")
     for label in data.get("labels", []):
         if label["name"].startswith("agent:"):
             gh("issue", "edit", str(issue), "-R", repo, "--remove-label", label["name"])
@@ -429,28 +430,45 @@ def main() -> int:
     return 0
 
 
-def finish_merged(repo: str, pr: int, issue: int, branch: str, sha: str, mode: str) -> None:
-    """マージの後片付け（コメント、Issue を閉じる、ブランチを消す）。1つが失敗しても残りを行う。
+def finish_merged(repo: str, pr: int, issue: int, branch: str, sha: str, mode: str) -> bool:
+    """マージの後片付け。Issue を閉じてラベルを外し、ブランチを消し、済んだらコメントを書く。
 
-    失敗して残ったものは、次の回の retry_unfinished がやり直す。
+    そのコメント（判定の印 verdict=ok mode=on）が、後片付けが済んだ記録になる。
+    どれかが失敗したら書かず、次の回の retry_unfinished がやり直す。済んだら True。
     """
-    steps = [
-        ("コメント", lambda: comment(repo, pr, comment_body("ok", [], sha, mode))),
-        ("Issue を閉じる", lambda: close_issue(repo, issue)),
-        ("ブランチを消す", lambda: delete_branch(repo, branch)),
-    ]
-    for name, step in steps:
-        try:
-            step()
-        except subprocess.CalledProcessError as e:
-            print(f"PR #{pr}: マージの後の「{name}」に失敗しました（次の回にやり直す）: {e.stderr}")
+    try:
+        close_issue(repo, issue)
+    except subprocess.CalledProcessError as e:
+        print(f"PR #{pr}: Issue を閉じられませんでした（次の回にやり直す）: {e.stderr}")
+        return False
+    if not delete_branch(repo, branch):
+        print(f"PR #{pr}: ブランチを消せませんでした（次の回にやり直す）")
+        return False
+    comment(repo, pr, comment_body("ok", [], sha, mode))
+    return True
+
+
+def cleanup_done(comments: list, sha: str) -> bool:
+    """この PR の後片付けが済んだ記録（GitHub Actions の「マージしました」のコメント）があるか。"""
+    return any(
+        m.group(1) == sha and m.group(3) == "ok" and m.group(4) == "on" for m in markers(comments)
+    )
+
+
+def reopened_after(events: list, when: str) -> bool:
+    """when（マージした時刻）より後に、Issue が開き直されたか。
+
+    人の判断なので、後片付けで閉じ直さない。
+    """
+    return any(e.get("event") == "reopened" and (e.get("created_at") or "") > when for e in events)
 
 
 def retry_unfinished(repo: str, agent: str, default_branch: str) -> None:
-    """GitHub Actions がマージしたのに、Issue が開いたままの PR の後片付けをやり直す。
+    """GitHub Actions がマージしたのに、後片付けが済んだ記録のない PR の後片付けをやり直す。
 
     マージした回の後片付けが一時的なエラーで失敗すると、PR はもう開いていないので、
-    上の判定の流れでは二度と見ない。最近閉じた PR から探す。
+    判定の流れでは二度と見ない。最近閉じた PR から探す。マージの後に Issue が開き直されていたら、
+    所有者の判断なので触らない。
     """
     recent = gh_api(f"repos/{repo}/pulls?state=closed&sort=updated&direction=desc&per_page=20")
     for pr in recent:
@@ -458,8 +476,11 @@ def retry_unfinished(repo: str, agent: str, default_branch: str) -> None:
             continue
         if (pr.get("base") or {}).get("ref") != default_branch:
             continue
-        m = re.match(r"issue-(\d+)-", pr["head"]["ref"])
-        if not m or gh_api(f"repos/{repo}/issues/{m.group(1)}").get("state") != "open":
+        if not re.match(r"issue-\d+-", pr["head"]["ref"]):
+            continue
+        sha = pr["head"]["sha"]
+        comments = gh_api(f"repos/{repo}/issues/{pr['number']}/comments", paginate=True)
+        if cleanup_done(comments, sha):
             continue
         detail = gh_api(f"repos/{repo}/pulls/{pr['number']}")
         if (detail.get("merged_by") or {}).get("login") != ACTIONS_BOT:
@@ -470,12 +491,12 @@ def retry_unfinished(repo: str, agent: str, default_branch: str) -> None:
         number = issue_number_of(pr["head"]["ref"], closing_numbers(refs, repo))
         if number is None:
             continue
-        print(f"PR #{pr['number']}: マージ済みで Issue #{number} が開いたまま。後片付けをやり直す")
-        try:
-            close_issue(repo, number)
-        except subprocess.CalledProcessError as e:
-            print(f"PR #{pr['number']}: Issue を閉じられませんでした: {e.stderr}")
-        delete_branch(repo, pr["head"]["ref"])
+        events = gh_api(f"repos/{repo}/issues/{number}/events", paginate=True)
+        if reopened_after(events, pr["merged_at"]):
+            print(f"PR #{pr['number']}: マージの後に Issue #{number} が開き直されたので、触らない")
+            continue
+        print(f"PR #{pr['number']}: 後片付けが済んでいないので、やり直す")
+        finish_merged(repo, pr["number"], number, pr["head"]["ref"], sha, "on")
 
 
 def comment(repo: str, pr: int, body: str) -> None:
