@@ -1,0 +1,15 @@
+name: 要望（リードに下書きしてもらう）
+description: やりたいことを一言で書くと、リードエージェントが仕様の下書きにする
+labels: ["agent:draft"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        やりたいことを、タイトルか下の欄に1〜2行で書いてください。ラベル `agent:draft` は自動で付きます。
+        15分ほどで、リードエージェントが仕様の下書き（`agent:proposal`）を作り、Discord に知らせます。この Issue は、下書きへのリンクを付けて閉じられます。
+        仕様まで自分で書くときは「タスク」を、何往復も相談したいときは相談役（`/consult`）を使ってください。
+  - type: textarea
+    id: request
+    attributes:
+      label: やりたいこと
+      description: 何に困っていて、どうしたいか。1〜2行で十分です（タイトルに書いたなら空欄でもかまいません）

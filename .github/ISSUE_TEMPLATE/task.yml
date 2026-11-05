@@ -1,0 +1,41 @@
+name: タスク
+description: エージェントに実装を依頼するタスク
+body:
+  - type: markdown
+    attributes:
+      value: |
+        書き終えたら、ラベル `agent:ready` を付けるとエージェントが着手します。
+        下書きの間は `agent:ready` を付けないでください。
+  - type: textarea
+    id: purpose
+    attributes:
+      label: 目的
+      description: なぜこのタスクが必要か
+    validations:
+      required: true
+  - type: textarea
+    id: todo
+    attributes:
+      label: やること
+      description: 実装してほしい内容
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 完了条件
+      description: 満たせば完了と判断できる条件。テストで確かめられる形が望ましい
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: やらないこと
+      description: 今回は対象外にすること（なければ空欄）
+  - type: textarea
+    id: notes
+    attributes:
+      label: 補足
+      description: 決めてある前提、参考情報など（なければ空欄）

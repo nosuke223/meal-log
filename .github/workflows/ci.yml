@@ -1,0 +1,51 @@
+# PR と main で、テストと lint を GitHub 上でも実行する。自動マージの条件の1つ（ジョブ名 test）。
+# 型 web（Node.js と npm）向け。agent-env の template-types/web/ から配置したもの。
+# package.json の scripts の lint、test、build（必須。ないと失敗する）と、Playwright の設定（playwright.config.*）が
+# あれば e2e を動かす。package.json がまだない（土台を作る前の）ときは、どの手順も飛ばす。
+name: テスト
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: 依存を入れる
+        if: hashFiles('package.json') != ''
+        run: npm ci
+      - name: lint
+        if: hashFiles('package.json') != ''
+        run: npm run lint
+      - name: テスト
+        if: hashFiles('package.json') != ''
+        run: npm run test
+      - name: ビルド
+        if: hashFiles('package.json') != ''
+        run: npm run build
+      - name: 画面を操作するテストのブラウザを入れる
+        if: hashFiles('playwright.config.*') != ''
+        run: npx playwright install --with-deps chromium
+      - name: 画面を操作するテスト
+        if: hashFiles('playwright.config.*') != ''
+        run: npm run e2e
+      - name: 画面を操作するテストの記録を残す（失敗したとき）
+        if: failure() && hashFiles('playwright.config.*') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
