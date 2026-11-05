@@ -362,16 +362,23 @@ def approve_and_merge(repo: str, pr: int, sha: str) -> None:
     gh("pr", "merge", str(pr), "-R", repo, "--merge", "--match-head-commit", sha)
 
 
-def delete_branch(repo: str, branch: str) -> bool:
-    """マージした PR のブランチを消す。消えていれば（人が先に消したなども）True。
+def delete_branch(repo: str, branch: str, sha: str, head_repo: str | None) -> bool:
+    """マージした PR のブランチを消す。消すべきものが残っていなければ True。
 
     Actions のトークンでマージすると、リポジトリの「マージ後にブランチを消す」設定が働かないため。
+    消すのは、ブランチがこのリポジトリのもので（fork ではない）、
+    先頭がマージしたコミットのままのときだけ。
+    同じ名前で作り直されたブランチや、新しいコミットが足されたブランチは、未マージの作業なので残す。
     """
-    result = subprocess.run(
-        ["gh", "api", "-X", "DELETE", f"repos/{repo}/git/refs/heads/{branch}"],
-        capture_output=True,
-        text=True,
-    )
+    if (head_repo or "").lower() != repo.lower():
+        return True  # fork の PR。マージ先の同じ名前のブランチは別物
+    ref = f"repos/{repo}/git/refs/heads/{branch}"
+    current = subprocess.run(["gh", "api", ref], capture_output=True, text=True)
+    if current.returncode != 0:
+        return "Not Found" in (current.stderr or "")  # すでに消えている
+    if json.loads(current.stdout).get("object", {}).get("sha") != sha:
+        return True
+    result = subprocess.run(["gh", "api", "-X", "DELETE", ref], capture_output=True, text=True)
     return result.returncode == 0 or "Reference does not exist" in (result.stderr or "")
 
 
@@ -427,7 +434,8 @@ def main() -> int:
                 print(f"PR #{pr['number']}: マージに失敗しました: {error}")
                 comment(repo, pr["number"], comment_body("error", [error], sha, mode))
                 continue
-            finish_merged(repo, pr["number"], number, pr["head"]["ref"], sha, mode)
+            head_repo = (pr["head"].get("repo") or {}).get("full_name")
+            finish_merged(repo, pr["number"], number, pr["head"]["ref"], sha, mode, head_repo)
             continue
         comment(repo, pr["number"], comment_body(verdict, reasons, sha, mode))
     if mode == "on":
@@ -435,7 +443,9 @@ def main() -> int:
     return 0
 
 
-def finish_merged(repo: str, pr: int, issue: int, branch: str, sha: str, mode: str) -> bool:
+def finish_merged(
+    repo: str, pr: int, issue: int, branch: str, sha: str, mode: str, head_repo: str | None
+) -> bool:
     """マージの後片付け。Issue を閉じてラベルを外し、ブランチを消し、済んだらコメントを書く。
 
     そのコメント（判定の印 verdict=ok mode=on）が、後片付けが済んだ記録になる。
@@ -446,7 +456,7 @@ def finish_merged(repo: str, pr: int, issue: int, branch: str, sha: str, mode: s
     except subprocess.CalledProcessError as e:
         print(f"PR #{pr}: Issue を閉じられませんでした（次の回にやり直す）: {e.stderr}")
         return False
-    if not delete_branch(repo, branch):
+    if not delete_branch(repo, branch, sha, head_repo):
         print(f"PR #{pr}: ブランチを消せませんでした（次の回にやり直す）")
         return False
     comment(repo, pr, comment_body("ok", [], sha, mode) + "\n" + CLEANUP_MARKER.format(sha=sha))
@@ -504,7 +514,8 @@ def retry_unfinished(repo: str, agent: str, default_branch: str) -> None:
             print(f"PR #{pr['number']}: マージの後に Issue #{number} が開き直されたので、触らない")
             continue
         print(f"PR #{pr['number']}: 後片付けが済んでいないので、やり直す")
-        finish_merged(repo, pr["number"], number, pr["head"]["ref"], sha, "on")
+        head_repo = (pr["head"].get("repo") or {}).get("full_name")
+        finish_merged(repo, pr["number"], number, pr["head"]["ref"], sha, "on", head_repo)
 
 
 def comment(repo: str, pr: int, body: str) -> None:
