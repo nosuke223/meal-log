@@ -34,6 +34,11 @@ MARKER = "<!-- auto-merge-check sha={sha} result={result} verdict={verdict} mode
 MARKER_RE = re.compile(
     r"<!-- auto-merge-check sha=(\w+) result=(\w+)(?: verdict=([\w-]+) mode=([\w-]+))? -->"
 )
+# 後片付け（Issue を閉じる、ラベル、ブランチ）が済んだ記録。
+# 済んでから書く「マージしました」のコメントに付ける。
+# 以前の版は後片付けの前に「マージしました」と書いていたので、判定の印とは別にする
+CLEANUP_MARKER = "<!-- auto-merge-cleanup-done sha={sha} -->"
+CLEANUP_RE = re.compile(r"<!-- auto-merge-cleanup-done sha=(\w+) -->")
 # 変えていたら人が見る（ルール、設定、CI、依存）
 # 依存のファイルは、型（python-cli、web）のものをまとめて見る
 CAREFUL_NAMES = {
@@ -444,15 +449,18 @@ def finish_merged(repo: str, pr: int, issue: int, branch: str, sha: str, mode: s
     if not delete_branch(repo, branch):
         print(f"PR #{pr}: ブランチを消せませんでした（次の回にやり直す）")
         return False
-    comment(repo, pr, comment_body("ok", [], sha, mode))
+    comment(repo, pr, comment_body("ok", [], sha, mode) + "\n" + CLEANUP_MARKER.format(sha=sha))
     return True
 
 
 def cleanup_done(comments: list, sha: str) -> bool:
-    """この PR の後片付けが済んだ記録（GitHub Actions の「マージしました」のコメント）があるか。"""
-    return any(
-        m.group(1) == sha and m.group(3) == "ok" and m.group(4) == "on" for m in markers(comments)
-    )
+    """この PR の後片付けが済んだ記録（GitHub Actions のコメントの CLEANUP_MARKER）があるか。"""
+    for c in comments:
+        if (c.get("user") or {}).get("login") != ACTIONS_BOT:
+            continue
+        if any(m.group(1) == sha for m in CLEANUP_RE.finditer(c.get("body") or "")):
+            return True
+    return False
 
 
 def reopened_after(events: list, when: str) -> bool:
