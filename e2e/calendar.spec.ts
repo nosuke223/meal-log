@@ -70,23 +70,31 @@ test('最初は今日の記録の画面で、ボタンでカレンダーを開�
   await expect(page.getByRole('heading', { name: '2026年11月' })).toBeVisible()
 })
 
-test('記録がある日にジャンルの点が1つずつ付き、予定は数えず、凡例があり、未来の日は選べない', async ({ page }) => {
+test('記録がある日にジャンルの点が1つずつ付き、凡例があり、明日以降の日も選べる', async ({ page }) => {
   await page.goto('/#/calendar/2026-11')
   const marked = day(page, '11月3日 和・中')
   await expect(marked).toBeVisible()
   await expect(marked).toContainText('和中')
   await expect(day(page, '11月10日 未設定')).toContainText('未')
-  // 予定だけの日と記録のない日には点がない
-  await expect(day(page, '11月5日')).toHaveText('5')
+  // 記録のない日には点がない
   await expect(day(page, '11月4日')).toHaveText('4')
 
   const legend = page.getByRole('region', { name: '点の凡例' })
-  // 点の文字と名前
-  await expect(legend.getByRole('listitem')).toHaveText(['和和', '洋洋', '中中', '他その他', '未未設定'])
+  // 点の文字と名前。予定の印は文字のない形だけ
+  await expect(legend.getByRole('listitem')).toHaveText(['和和', '洋洋', '中中', '他その他', '未未設定', '予定あり'])
 
-  await expect(day(page, '11月19日')).toBeDisabled()
+  await expect(day(page, '11月19日')).toBeEnabled()
   await expect(day(page, '11月18日')).toBeEnabled()
   await expectNoHorizontalScroll(page)
+})
+
+test('開いたとき、過去の日の予定は「食べた」になり、予定の印ではなくジャンルの点が付く', async ({ page }) => {
+  await page.goto('/#/calendar/2026-11')
+  // 11月5日のパスタ（洋）は予定として保存されていた
+  const passed = day(page, '11月5日 洋')
+  await expect(passed).toBeVisible()
+  await expect(passed).toHaveText('5洋')
+  await expect(passed.locator('.planned-mark')).toHaveCount(0)
 })
 
 test('過去の日を開いて品を追加・変更・削除でき、読み込み直しても同じ日が開き、「戻る」で点が更新されたカレンダーに戻る', async ({ page }) => {
@@ -163,12 +171,15 @@ test('今日のマスを選ぶと、「今日」ボタンと同じ今日の記�
   await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
 })
 
-test('アドレスの日付が不正なときや未来の日のときは、今日の記録の画面が開く', async ({ page }) => {
-  for (const hash of ['#/day/2026-02-30', '#/day/abc', '#/day/2026-11-19']) {
+test('アドレスの日付が不正なときは、今日の記録の画面が開き、明日以降の日はその日の画面が開く', async ({ page }) => {
+  for (const hash of ['#/day/2026-02-30', '#/day/abc']) {
     await page.goto(`/${hash}`)
     await page.reload()
     await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
   }
+  await page.goto('/#/day/2026-11-19')
+  await page.reload()
+  await expect(page.getByText('2026年11月19日（木）')).toBeVisible()
 })
 
 test('パソコンの画面の大きさでも、カレンダーが崩れない', async ({ page }) => {
