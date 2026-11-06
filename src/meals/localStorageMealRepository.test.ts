@@ -4,7 +4,7 @@ import {
   MEAL_STORAGE_KEY,
   MEAL_STORAGE_VERSION,
 } from './localStorageMealRepository'
-import { MealValidationError, toLocalDateString, type MealInput } from './mealRecord'
+import { MealValidationError, toLocalDateString, type MealInput, type MealRecord } from './mealRecord'
 import { MealNotFoundError, MealStorageError } from './mealRepository'
 
 /** 呼ぶたびに1秒進む時計 */
@@ -508,6 +508,88 @@ describe('日が過ぎた予定の更新', () => {
     localStorage.setItem(MEAL_STORAGE_KEY, '{broken')
     const repository = createRepository()
     await expect(repository.markPlannedAsEatenBefore('2026-11-06')).rejects.toThrow(MealStorageError)
+    expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe('{broken')
+  })
+})
+
+describe('全件の取得と一括取り込み', () => {
+  function imported(overrides: Partial<MealRecord> = {}): MealRecord {
+    return {
+      id: 'imported',
+      date: '2026-10-01',
+      mealType: 'dinner',
+      name: 'カレー',
+      genre: 'other',
+      dishType: 'main',
+      status: 'eaten',
+      createdAt: '2026-10-01T10:00:00.000Z',
+      updatedAt: '2026-10-02T10:00:00.000Z',
+      ...overrides,
+    }
+  }
+
+  it('全件の取得は、すべての日の記録を並べて返す。0件なら空', async () => {
+    const repository = createRepository()
+    expect(await repository.listAll()).toEqual([])
+    const later = await repository.create({ ...base, date: '2026-12-01' })
+    const earlier = await repository.create({ ...base, date: '2025-01-01' })
+    expect(await repository.listAll()).toEqual([earlier, later])
+  })
+
+  it('ID と日時を保ったまま追加し、同じ ID は置き換え、渡していない記録は残す', async () => {
+    const repository = createRepository()
+    const kept = await repository.create(base)
+    const replaced = await repository.create({ ...base, name: 'パン' })
+
+    const replacement = imported({ id: replaced.id, name: 'おにぎり' })
+    await repository.importRecords([imported(), replacement])
+
+    expect(await repository.get('imported')).toEqual(imported())
+    expect(await repository.get(replaced.id)).toEqual(replacement)
+    expect(await repository.get(kept.id)).toEqual(kept)
+    expect(await repository.listAll()).toHaveLength(3)
+  })
+
+  it('状態は渡したまま保存する（日付の決まりは呼び出し側で守る）', async () => {
+    const repository = createRepository()
+    await repository.importRecords([imported({ date: '2099-01-01', status: 'eaten' })])
+    expect((await repository.get('imported'))?.status).toBe('eaten')
+  })
+
+  it('1件でも不正なら MealValidationError で、何も保存しない', async () => {
+    const repository = createRepository()
+    const kept = await repository.create(base)
+    const before = localStorage.getItem(MEAL_STORAGE_KEY)
+
+    await expect(
+      repository.importRecords([imported({ id: 'ok' }), imported({ id: 'bad', name: ' ' })]),
+    ).rejects.toThrow('2件目の記録が不正です: 品名を入力してください')
+    await expect(repository.importRecords([imported(), imported()])).rejects.toThrow(MealValidationError)
+    await expect(
+      repository.importRecords([imported({ updatedAt: 'not a date' })]),
+    ).rejects.toThrow(MealValidationError)
+
+    expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe(before)
+    expect(await repository.listAll()).toEqual([kept])
+  })
+
+  it('書き込みに失敗したときは MealStorageError で、保存データは元のまま', async () => {
+    const repository = createRepository()
+    await repository.create(base)
+    const before = localStorage.getItem(MEAL_STORAGE_KEY)
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError')
+    })
+
+    await expect(repository.importRecords([imported()])).rejects.toThrow(MealStorageError)
+    expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe(before)
+  })
+
+  it('保存データが壊れているときは MealStorageError で、上書きしない', async () => {
+    localStorage.setItem(MEAL_STORAGE_KEY, '{broken')
+    const repository = createRepository()
+    await expect(repository.listAll()).rejects.toThrow(MealStorageError)
+    await expect(repository.importRecords([imported()])).rejects.toThrow(MealStorageError)
     expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe('{broken')
   })
 })
