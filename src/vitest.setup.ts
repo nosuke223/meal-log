@@ -5,4 +5,6 @@ import { afterEach } from 'vitest'
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
+  // 画面を移ったテストのアドレスを、次のテストに持ち越さない
+  window.history.replaceState(null, '', '/')
 })

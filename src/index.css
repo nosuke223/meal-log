@@ -33,6 +33,13 @@ h2 {
   margin: 0 0 12px;
 }
 
+.screen-header {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
 .section {
   margin-bottom: 16px;
   padding: 12px;
@@ -149,6 +156,141 @@ button.danger {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.month-nav {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.month-title {
+  margin: 0;
+  text-align: center;
+}
+
+.month-nav-sub {
+  display: flex;
+  justify-content: center;
+  margin: 8px 0;
+}
+
+.calendar {
+  width: 100%;
+  table-layout: fixed;
+  border-spacing: 2px;
+}
+
+.calendar th {
+  font-size: 0.85rem;
+  font-weight: normal;
+  color: #555;
+}
+
+.calendar td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.day {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  align-items: center;
+  width: 100%;
+  min-height: 56px;
+  padding: 2px;
+  border-color: #ccc;
+}
+
+.day[aria-current='date'] {
+  background: #dbeafe;
+  border: 2px solid #2563eb;
+}
+
+.day[aria-current='date'] .day-number {
+  font-weight: bold;
+}
+
+.day:disabled {
+  color: #888;
+  background: #f0f0f0;
+  border-style: dashed;
+  opacity: 1;
+}
+
+.marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  justify-content: center;
+}
+
+.mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 10px;
+  line-height: 1;
+  color: #fff;
+  border-radius: 50%;
+}
+
+.mark-japanese {
+  background: #b91c1c;
+}
+
+.mark-western {
+  background: #1d4ed8;
+  border-radius: 3px;
+}
+
+.mark-chinese {
+  background: #a16207;
+}
+
+.mark-other {
+  background: #047857;
+  border-radius: 3px;
+}
+
+.mark-unset {
+  color: #444;
+  background: #fff;
+  border: 1px dashed #444;
+}
+
+.legend {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.legend-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.legend-list li {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.legend-note {
+  margin: 8px 0 0;
+  font-size: 0.85rem;
+  color: #555;
 }
 
 .error {
