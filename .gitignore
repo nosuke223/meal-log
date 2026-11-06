@@ -1,5 +1,11 @@
 # macOS の Finder が自動生成するファイル
 .DS_Store
 
+# 依存、ビルド結果、テストの出力
+node_modules/
+dist/
+playwright-report/
+test-results/
+
 # エージェントの PR 本文やコメントの下書き
 .agent-tmp/
