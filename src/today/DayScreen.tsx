@@ -44,7 +44,9 @@ export function DayScreen({ repository, date, onOpenCalendar }: Props) {
         setError(null)
       })
       .catch((cause: unknown) => {
-        if (!cancelled) setError(`記録を読み込めませんでした: ${messageOf(cause)}`)
+        if (cancelled) return
+        setRecords([])
+        setError(`記録を読み込めませんでした: ${messageOf(cause)}`)
       })
     return () => {
       cancelled = true

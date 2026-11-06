@@ -149,6 +149,24 @@ test('今日を指定しないとき、日付をまたぐと表示と記録の�
   ])
 })
 
+test('今日を指定しないとき、日付をまたいだ後の読み込みに失敗すると、エラーを表示し、前の日の品は表示しない', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+  vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
+  render(<App />)
+  await addItem('朝', 'ごはん')
+
+  vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+    throw new DOMException('denied', 'SecurityError')
+  })
+  act(() => {
+    vi.setSystemTime(new Date(2026, 10, 7, 0, 0, 10))
+    vi.advanceTimersByTime(30_000)
+  })
+  expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
+  expect(await screen.findByRole('alert')).toHaveTextContent('記録を読み込めませんでした')
+  expect(within(section('朝')).queryByRole('button', { name: /ごはん/ })).not.toBeInTheDocument()
+})
+
 test('保存先へのアクセスが拒否される環境でも、画面を表示し、エラーを表示する', async () => {
   vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
     throw new DOMException('denied', 'SecurityError')
