@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { expect, test, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import App from '../App'
 import { MEAL_STORAGE_KEY } from '../meals/localStorageMealRepository'
 import type { MealRecord } from '../meals/mealRecord'
@@ -126,6 +126,74 @@ test('アドレスの日付が不正なときや未来の日のときは、今�
     expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
     view.unmount()
   }
+})
+
+test('ヘッダーの「今日」ボタンで、履歴を増やして今日の記録の画面を開く', () => {
+  openCalendar()
+  const button = screen.getByRole('button', { name: '今日' })
+  expect(button.closest('header')).not.toBeNull()
+  const length = window.history.length
+
+  fireEvent.click(button)
+  expect(window.location.hash).toBe('#/')
+  expect(window.history.length).toBe(length + 1)
+  expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'カレンダー' })).toBeInTheDocument()
+})
+
+test('カレンダーのアドレスを直接開いた状態からでも、「今日」ボタンで今日の記録の画面に移れる', () => {
+  window.history.replaceState(null, '', '/#/calendar/2026-10')
+  render(<App today={TODAY} />)
+  expect(screen.getByRole('heading', { name: '2026年10月' })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '今日' }))
+  expect(window.location.hash).toBe('#/')
+  expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+})
+
+test('今日のマスを選ぶと、「今日」ボタンと同じ今日の記録の画面が開く', async () => {
+  openCalendar()
+  fireEvent.click(await calendar().findByRole('button', { name: '11月6日' }))
+  expect(window.location.hash).toBe('#/')
+  expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+})
+
+describe('日付をまたいだとき', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function crossMidnight() {
+    act(() => {
+      vi.setSystemTime(new Date(2026, 10, 7, 0, 0, 10))
+      vi.advanceTimersByTime(30_000)
+    })
+  }
+
+  test('「今日」ボタンで開いた画面は、翌日の画面に変わる', () => {
+    window.history.replaceState(null, '', '/#/calendar/2026-10')
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: '今日' }))
+    expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+
+    crossMidnight()
+    expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
+  })
+
+  test('今日のマスで開いた画面は、翌日の画面に変わる', () => {
+    window.history.replaceState(null, '', '/#/calendar/2026-11')
+    render(<App />)
+    fireEvent.click(calendar().getByRole('button', { name: '11月6日' }))
+    expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+
+    crossMidnight()
+    expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
+  })
 })
 
 test('カレンダーの読み込みに失敗したとき、エラーを表示する', async () => {

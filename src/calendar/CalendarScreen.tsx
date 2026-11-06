@@ -19,6 +19,7 @@ type Props = {
   month: string
   onChangeMonth: (month: string) => void
   onSelectDate: (date: string) => void
+  onOpenToday: () => void
 }
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
@@ -59,7 +60,7 @@ function Mark({ mark }: { mark: GenreMark }) {
 }
 
 /** 月表示のカレンダー。記録がある日に、出てきたジャンルの点を表示する */
-export function CalendarScreen({ repository, today, month, onChangeMonth, onSelectDate }: Props) {
+export function CalendarScreen({ repository, today, month, onChangeMonth, onSelectDate, onOpenToday }: Props) {
   const [marksByDate, setMarksByDate] = useState<Map<string, GenreMark[]>>(new Map())
   const [loadedMonth, setLoadedMonth] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -90,8 +91,11 @@ export function CalendarScreen({ repository, today, month, onChangeMonth, onSele
 
   return (
     <main className="screen">
-      <header>
+      <header className="screen-header">
         <h1>meal-log</h1>
+        <button type="button" onClick={onOpenToday}>
+          今日
+        </button>
       </header>
       {error && (
         <p role="alert" className="error">

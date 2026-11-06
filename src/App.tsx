@@ -3,7 +3,7 @@ import { CalendarScreen } from './calendar/CalendarScreen'
 import { monthOf } from './calendar/calendarMonth'
 import { createLocalStorageMealRepository } from './meals/localStorageMealRepository'
 import type { MealRepository } from './meals/mealRepository'
-import { calendarHash, dayHash, parseHash } from './route'
+import { calendarHash, dayHash, parseHash, todayHash } from './route'
 import { DayScreen } from './today/DayScreen'
 import { useToday } from './useToday'
 
@@ -51,7 +51,9 @@ function App({ repository, today: fixedToday }: Props) {
         today={today}
         month={route.month}
         onChangeMonth={(month) => navigate(calendarHash(month), true)}
-        onSelectDate={(date) => navigate(dayHash(date))}
+        // 今日のマスは、「今日」ボタンと同じ、日付をまたぐと翌日に変わる今日の画面を開く
+        onSelectDate={(date) => navigate(date === today ? todayHash() : dayHash(date))}
+        onOpenToday={() => navigate(todayHash())}
       />
     )
   }

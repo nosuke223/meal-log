@@ -140,6 +140,29 @@ test('前の月の日を開いて「戻る」と、その月のカレンダー�
   await expect(page.getByRole('heading', { name: '2026年10月' })).toBeVisible()
 })
 
+test('カレンダーのアドレスを直接開いた状態から、「今日」ボタンで今日の記録の画面に戻れる', async ({ page }) => {
+  await page.goto('/#/calendar/2026-10')
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '2026年10月' })).toBeVisible()
+  await expectNoHorizontalScroll(page)
+
+  await page.getByRole('button', { name: '今日', exact: true }).click()
+  await expect(page).toHaveURL(/#\/$/)
+  await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
+  await expectNoHorizontalScroll(page)
+
+  // 履歴を増やすので、「戻る」でカレンダーに戻る
+  await page.goBack()
+  await expect(page.getByRole('heading', { name: '2026年10月' })).toBeVisible()
+})
+
+test('今日のマスを選ぶと、「今日」ボタンと同じ今日の記録の画面が開く', async ({ page }) => {
+  await page.goto('/#/calendar/2026-11')
+  await day(page, '11月18日').click()
+  await expect(page).toHaveURL(/#\/$/)
+  await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
+})
+
 test('アドレスの日付が不正なときや未来の日のときは、今日の記録の画面が開く', async ({ page }) => {
   for (const hash of ['#/day/2026-02-30', '#/day/abc', '#/day/2026-11-19']) {
     await page.goto(`/${hash}`)
