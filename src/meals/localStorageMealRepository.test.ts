@@ -191,6 +191,82 @@ describe('並び順', () => {
 
     expect(await repository.listByDate(base.date)).toEqual([updatedFirst, second])
   })
+
+  it('同じ時刻に作っても、作った順に並ぶ', async () => {
+    const fixed = new Date('2026-11-06T03:00:00.000Z')
+    const ids = ['ffff', 'aaaa', 'cccc']
+    let i = 0
+    const repository = createLocalStorageMealRepository({ now: () => fixed, generateId: () => ids[i++] })
+    const names = ['1品目 ご飯', '2品目 味噌汁', '3品目 焼き魚']
+    for (const name of names) {
+      await repository.create({ ...base, mealType: 'dinner', name })
+    }
+
+    const records = await repository.listByDate(base.date)
+    expect(records.map((record) => record.name)).toEqual(names)
+    expect(records[0].createdAt).toBe('2026-11-06T03:00:00.000Z')
+    expect(records[2].createdAt).toBe('2026-11-06T03:00:00.002Z')
+  })
+
+  it('時計を差し替えずに続けて作っても、作った順に並ぶ', async () => {
+    const repository = createLocalStorageMealRepository()
+    const names = Array.from({ length: 20 }, (_, index) => `品${index}`)
+    for (const name of names) {
+      await repository.create({ ...base, name })
+    }
+
+    const records = await repository.listByDate(base.date)
+    expect(records.map((record) => record.name)).toEqual(names)
+  })
+
+  it('保存済みの記録のうち、最も遅い作成日時より後の日時で作る', async () => {
+    const repository = createRepository()
+    localStorage.setItem(
+      MEAL_STORAGE_KEY,
+      JSON.stringify({
+        version: MEAL_STORAGE_VERSION,
+        records: [
+          {
+            id: 'future',
+            ...base,
+            date: '2026-11-07',
+            genre: null,
+            dishType: null,
+            createdAt: '2026-11-06T05:00:00.000Z',
+            updatedAt: '2026-11-06T05:00:00.000Z',
+          },
+        ],
+      }),
+    )
+    const created = await repository.create(base)
+
+    expect(created.createdAt).toBe('2026-11-06T05:00:00.001Z')
+    expect(created.updatedAt).toBe(created.createdAt)
+  })
+
+  it('保存データに作成日時まで同じ記録があれば、ID の順に並ぶ（読み込むたびに同じ並び）', async () => {
+    const record = (id: string, name: string) => ({
+      id,
+      ...base,
+      name,
+      genre: null,
+      dishType: null,
+      createdAt: '2026-11-06T00:00:00.000Z',
+      updatedAt: '2026-11-06T00:00:00.000Z',
+    })
+    localStorage.setItem(
+      MEAL_STORAGE_KEY,
+      JSON.stringify({
+        version: MEAL_STORAGE_VERSION,
+        records: [record('c', '3'), record('a', '1'), record('b', '2')],
+      }),
+    )
+    const repository = createRepository()
+
+    const first = await repository.listByDate(base.date)
+    expect(first.map((r) => r.id)).toEqual(['a', 'b', 'c'])
+    expect(await repository.listByDate(base.date)).toEqual(first)
+  })
 })
 
 describe('不正な値', () => {
