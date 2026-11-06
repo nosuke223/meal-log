@@ -56,7 +56,8 @@ async function expectNoHorizontalScroll(page: Page) {
 /** 「読み込む」を押して、ファイルを選ぶ */
 async function chooseFile(page: Page, file: string | { name: string; mimeType: string; buffer: Buffer }) {
   const chooser = page.waitForEvent('filechooser')
-  await page.getByRole('button', { name: '読み込む' }).click()
+  // 隠したファイル入力欄（「読み込むファイル」）も button として見えるため、完全一致で選ぶ
+  await page.getByRole('button', { name: '読み込む', exact: true }).click()
   await (await chooser).setFiles(file)
 }
 
