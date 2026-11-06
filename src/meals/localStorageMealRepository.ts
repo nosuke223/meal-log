@@ -82,7 +82,13 @@ export function createLocalStorageMealRepository(
         dishType: input.dishType ?? null,
         status: input.status,
       })
-      const timestamp = now().toISOString()
+      // 同じミリ秒に続けて作っても作った順に並ぶよう、保存済みのどの記録の作成日時よりも後にする
+      const latestCreatedAt = records.reduce<string | null>(
+        (latest, existing) =>
+          latest === null || Date.parse(existing.createdAt) > Date.parse(latest) ? existing.createdAt : latest,
+        null,
+      )
+      const timestamp = latestCreatedAt === null ? now().toISOString() : nextTimestamp(now(), latestCreatedAt)
       const record: MealRecord = {
         id: generateId(),
         ...fields,
@@ -156,7 +162,7 @@ function assertDate(date: string): void {
   }
 }
 
-/** 更新日時が前の値と同じかそれより前にならないようにする（同じミリ秒に続けて更新したとき用） */
+/** 日時が前の値と同じかそれより前にならないようにする（同じミリ秒に続けて作成・更新したとき用） */
 function nextTimestamp(current: Date, previous: string): string {
   const previousTime = Date.parse(previous)
   const time = Math.max(current.getTime(), previousTime + 1)
