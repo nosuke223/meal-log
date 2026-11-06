@@ -110,6 +110,49 @@ export function validateMealFields(fields: {
   }
 }
 
+/** 窓口が付ける形の日時（ISO 8601、UTC、ミリ秒まで。例: 2026-11-06T00:00:00.000Z）なら true */
+export function isTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const time = Date.parse(value)
+  return !Number.isNaN(time) && new Date(time).toISOString() === value
+}
+
+/**
+ * ID と日時を含めた記録1件を検査し、記録の項目だけを取り出して返す（品名の前後の空白は取り除く）。
+ * 中身の検査は validateMealFields と同じ。不正なら MealValidationError
+ */
+export function validateMealRecord(value: unknown): MealRecord {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new MealValidationError('記録の形が違います')
+  }
+  const record = value as Record<string, unknown>
+  if (typeof record.id !== 'string' || record.id.trim() === '') {
+    throw new MealValidationError('ID がありません')
+  }
+  for (const key of ['createdAt', 'updatedAt'] as const) {
+    if (!isTimestamp(record[key])) {
+      throw new MealValidationError(`${key} は ISO 8601 の日時（UTC、例: 2026-11-06T00:00:00.000Z）にしてください: ${String(record[key])}`)
+    }
+  }
+  const fields = {
+    date: record.date,
+    mealType: record.mealType,
+    name: record.name,
+    genre: record.genre,
+    dishType: record.dishType,
+    status: record.status,
+  }
+  validateMealFields(fields)
+  const valid = fields as Omit<MealRecord, 'id' | 'createdAt' | 'updatedAt'>
+  return {
+    id: record.id,
+    ...valid,
+    name: valid.name.trim(),
+    createdAt: record.createdAt as string,
+    updatedAt: record.updatedAt as string,
+  }
+}
+
 /** 日付 → 区分（朝・昼・夜・間食）→ 作成日時の順に並べるための比較 */
 export function compareMealRecords(a: MealRecord, b: MealRecord): number {
   if (a.date !== b.date) return a.date < b.date ? -1 : 1

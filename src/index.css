@@ -354,6 +354,53 @@ button.danger {
   color: #555;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.description {
+  margin: 0 0 12px;
+  font-size: 0.9rem;
+  color: #555;
+}
+
+.confirm {
+  padding: 12px;
+  background: #eff6ff;
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+}
+
+.confirm p {
+  margin: 0 0 8px;
+}
+
+.confirm-file {
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+/* 画面には見せず、読み上げやファイルの選択には使う */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.notice {
+  padding: 8px 12px;
+  color: #065f46;
+  background: #d1fae5;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+
 .error {
   padding: 8px 12px;
   color: #b91c1c;

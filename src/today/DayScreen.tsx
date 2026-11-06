@@ -22,6 +22,7 @@ type Props = {
   /** 日が過ぎた予定の自動更新に失敗したときのエラー。あれば表示する */
   autoUpdateError?: string | null
   onOpenCalendar: () => void
+  onOpenData: () => void
 }
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
@@ -37,7 +38,7 @@ function messageOf(error: unknown): string {
 }
 
 /** 1日分の記録の画面。追加・変更・削除ができる */
-export function DayScreen({ repository, date, today, revision, autoUpdateError, onOpenCalendar }: Props) {
+export function DayScreen({ repository, date, today, revision, autoUpdateError, onOpenCalendar, onOpenData }: Props) {
   const [records, setRecords] = useState<MealRecord[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -96,9 +97,14 @@ export function DayScreen({ repository, date, today, revision, autoUpdateError, 
             <time dateTime={date}>{formatDate(date)}</time>
           </p>
         </div>
-        <button type="button" onClick={onOpenCalendar}>
-          カレンダー
-        </button>
+        <div className="header-actions">
+          <button type="button" onClick={onOpenCalendar}>
+            カレンダー
+          </button>
+          <button type="button" onClick={onOpenData}>
+            データ
+          </button>
+        </div>
       </header>
       {autoUpdateError && (
         <p role="alert" className="error">

@@ -3,6 +3,7 @@ import {
   isValidDate,
   MealValidationError,
   validateMealFields,
+  validateMealRecord,
   type MealChanges,
   type MealRecord,
 } from './mealRecord'
@@ -150,6 +151,31 @@ export function createLocalStorageMealRepository(
       // 更新するものがなければ書き込まない
       if (updated.length > 0) save(next)
       return sorted(updated)
+    },
+
+    async listAll() {
+      return sorted(load())
+    },
+
+    async importRecords(input) {
+      // 書き込む前にすべて検査する（1件でも不正なら何も書き込まない）
+      const incoming = input.map((record, index) => {
+        try {
+          return validateMealRecord(record)
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error)
+          throw new MealValidationError(`${index + 1}件目の記録が不正です: ${reason}`)
+        }
+      })
+      const ids = new Set<string>()
+      for (const record of incoming) {
+        if (ids.has(record.id)) throw new MealValidationError(`ID が重なっています: ${record.id}`)
+        ids.add(record.id)
+      }
+      const byId = new Map(load().map((record) => [record.id, record]))
+      for (const record of incoming) byId.set(record.id, record)
+      // 1回の書き込みで保存するので、失敗したときは保存データは元のまま
+      if (incoming.length > 0) save([...byId.values()])
     },
   }
 }

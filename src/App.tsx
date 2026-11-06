@@ -3,7 +3,8 @@ import { CalendarScreen } from './calendar/CalendarScreen'
 import { monthOf } from './calendar/calendarMonth'
 import { createLocalStorageMealRepository } from './meals/localStorageMealRepository'
 import type { MealRepository } from './meals/mealRepository'
-import { calendarHash, dayHash, parseHash, todayHash } from './route'
+import { DataScreen } from './data/DataScreen'
+import { calendarHash, dataHash, dayHash, parseHash, todayHash } from './route'
 import { DayScreen } from './today/DayScreen'
 import { useToday } from './useToday'
 
@@ -87,6 +88,10 @@ function App({ repository, today: fixedToday }: Props) {
 
   const route = parseHash(hash, today)
 
+  if (route.screen === 'data') {
+    return <DataScreen repository={mealRepository} today={today} onBack={() => navigate(todayHash())} />
+  }
+
   if (route.screen === 'calendar') {
     return (
       <CalendarScreen
@@ -114,6 +119,7 @@ function App({ repository, today: fixedToday }: Props) {
       revision={revision}
       autoUpdateError={autoUpdateError}
       onOpenCalendar={() => navigate(calendarHash(monthOf(date)))}
+      onOpenData={() => navigate(dataHash())}
     />
   )
 }
