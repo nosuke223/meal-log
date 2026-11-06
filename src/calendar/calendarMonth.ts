@@ -89,3 +89,8 @@ export function genreMarksByDate(records: readonly MealRecord[]): Map<string, Ge
   }
   return result
 }
+
+/** 「予定」の記録がある日（YYYY-MM-DD） */
+export function plannedDates(records: readonly MealRecord[]): Set<string> {
+  return new Set(records.filter((record) => record.status === 'planned').map((record) => record.date))
+}

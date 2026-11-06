@@ -11,7 +11,7 @@ export type Route =
   | { screen: 'calendar'; month: string }
 
 /**
- * ハッシュを画面に直す。今日（YYYY-MM-DD）より後の日と、不正な日付は今日の記録の画面にする。
+ * ハッシュを画面に直す。不正な日付は今日の記録の画面にする（明日以降の日は、その日の画面にする）。
  * 不正な月はカレンダーの今月にする
  */
 export function parseHash(hash: string, today: string): Route {
@@ -19,7 +19,7 @@ export function parseHash(hash: string, today: string): Route {
   if (screen === 'calendar') {
     return { screen: 'calendar', month: isValidMonth(value) ? value : monthOf(today) }
   }
-  if (screen === 'day' && isValidDate(value) && value <= today) {
+  if (screen === 'day' && isValidDate(value)) {
     return { screen: 'day', date: value }
   }
   return { screen: 'day', date: null }

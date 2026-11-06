@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { DISH_TYPE_LABELS, GENRE_LABELS, MEAL_TYPE_LABELS } from '../meals/labels'
+import { useId, useState } from 'react'
+import { DISH_TYPE_LABELS, GENRE_LABELS, MEAL_STATUS_LABELS, MEAL_TYPE_LABELS } from '../meals/labels'
 import {
   DISH_TYPES,
   GENRES,
+  isValidDate,
   MEAL_TYPES,
   type DishType,
   type Genre,
@@ -10,25 +11,56 @@ import {
   type MealRecord,
   type MealType,
 } from '../meals/mealRecord'
+import { canToggleStatus, statusForDate } from '../meals/mealStatus'
 import { ChoiceButtons } from './ChoiceButtons'
 
 type Props = {
   record: MealRecord
+  /** 今日（YYYY-MM-DD） */
+  today: string
   onUpdate: (id: string, changes: MealChanges) => Promise<boolean>
   onDelete: (id: string) => Promise<boolean>
 }
 
-export function MealItem({ record, onUpdate, onDelete }: Props) {
+/** 状態の札に、文字と並べて書く記号（色だけに頼らず区別できるようにする） */
+const STATUS_SYMBOLS = { planned: '○', eaten: '✓' } as const
+
+export function MealItem({ record, today, onUpdate, onDelete }: Props) {
+  const nameId = useId()
   const [editing, setEditing] = useState(false)
+  const [toggling, setToggling] = useState(false)
+
+  async function toggle() {
+    setToggling(true)
+    await onUpdate(record.id, { status: record.status === 'planned' ? 'eaten' : 'planned' })
+    setToggling(false)
+  }
 
   if (!editing) {
     return (
-      <li className="item">
+      <li className={`item item-${record.status}`}>
         <button type="button" className="item-button" onClick={() => setEditing(true)}>
-          <span className="item-name">{record.name}</span>
+          <span className={`status status-${record.status}`}>
+            <span aria-hidden="true">{STATUS_SYMBOLS[record.status]}</span>
+            {MEAL_STATUS_LABELS[record.status]}
+          </span>
+          <span className="item-name" id={nameId}>
+            {record.name}
+          </span>
           {record.genre && <span className="tag">{GENRE_LABELS[record.genre]}</span>}
           {record.dishType && <span className="tag">{DISH_TYPE_LABELS[record.dishType]}</span>}
         </button>
+        {canToggleStatus(record.date, today) && (
+          <button
+            type="button"
+            className="toggle"
+            aria-describedby={nameId}
+            disabled={toggling}
+            onClick={() => void toggle()}
+          >
+            {record.status === 'planned' ? '食べたにする' : '予定に戻す'}
+          </button>
+        )}
       </li>
     )
   }
@@ -37,6 +69,7 @@ export function MealItem({ record, onUpdate, onDelete }: Props) {
     <li className="item">
       <EditForm
         record={record}
+        today={today}
         onUpdate={onUpdate}
         onDelete={onDelete}
         onClose={() => setEditing(false)}
@@ -47,16 +80,21 @@ export function MealItem({ record, onUpdate, onDelete }: Props) {
 
 type EditFormProps = Props & { onClose: () => void }
 
-function EditForm({ record, onUpdate, onDelete, onClose }: EditFormProps) {
+function EditForm({ record, today, onUpdate, onDelete, onClose }: EditFormProps) {
   const [name, setName] = useState(record.name)
   const [genre, setGenre] = useState<Genre | null>(record.genre)
   const [dishType, setDishType] = useState<DishType | null>(record.dishType)
   const [mealType, setMealType] = useState<MealType>(record.mealType)
+  const [date, setDate] = useState(record.date)
   const [pending, setPending] = useState(false)
+
+  const canSave = name.trim() !== '' && isValidDate(date) && !pending
 
   async function save() {
     setPending(true)
-    const ok = await onUpdate(record.id, { name, genre, dishType, mealType })
+    // 日付を変えたら、状態を決まりに合わせる（今日に動かしたときは、そのときの状態のまま）
+    const status = statusForDate(date, today, record.status)
+    const ok = await onUpdate(record.id, { name, genre, dishType, mealType, date, status })
     setPending(false)
     if (ok) onClose()
   }
@@ -75,7 +113,7 @@ function EditForm({ record, onUpdate, onDelete, onClose }: EditFormProps) {
       aria-label="品の変更"
       onSubmit={(event) => {
         event.preventDefault()
-        if (name.trim() !== '' && !pending) void save()
+        if (canSave) void save()
       }}
     >
       <input
@@ -102,8 +140,18 @@ function EditForm({ record, onUpdate, onDelete, onClose }: EditFormProps) {
           ))}
         </select>
       </label>
+      <label className="select-row">
+        日付
+        <input
+          type="date"
+          className="date-input"
+          value={date}
+          required
+          onChange={(event) => setDate(event.target.value)}
+        />
+      </label>
       <div className="actions">
-        <button type="submit" className="primary" disabled={name.trim() === '' || pending}>
+        <button type="submit" className="primary" disabled={!canSave}>
           保存
         </button>
         <button type="button" onClick={onClose} disabled={pending}>

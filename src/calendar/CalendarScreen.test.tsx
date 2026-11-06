@@ -31,6 +31,10 @@ function calendar() {
   return within(screen.getByRole('table'))
 }
 
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 test('記録の画面のボタンでカレンダーを開くと、今月が表示され、今日のマスが強調される', async () => {
   openCalendar()
   expect(screen.getByRole('heading', { name: '2026年11月' })).toBeInTheDocument()
@@ -59,33 +63,82 @@ test('記録がある日にジャンルごとの点が1つずつ付き、予定�
     { date: '2026-11-02', genre: 'chinese' },
     { date: '2026-11-02', genre: 'japanese' },
     { date: '2026-11-02', genre: null },
-    { date: '2026-11-03', genre: 'western', status: 'planned' },
+    { date: '2026-11-06', genre: 'chinese', status: 'eaten' },
+    { date: '2026-11-06', genre: 'western', status: 'planned' },
+    { date: '2026-11-08', genre: 'western', status: 'planned' },
     { date: '2026-10-31', genre: 'other' },
   ])
   openCalendar()
   const marked = await calendar().findByRole('button', { name: '11月2日 和・中・未設定' })
   expect(marked).toHaveTextContent('和中未')
-  expect(calendar().getByRole('button', { name: '11月3日' })).toHaveTextContent(/^3$/)
+  // 予定は点に数えず、予定の印だけを付ける（今日を含む）
+  const today = calendar().getByRole('button', { name: '11月6日 中 予定あり' })
+  expect(today).toHaveTextContent(/^6中$/)
+  expect(today.querySelector('.planned-mark')).not.toBeNull()
+  const future = calendar().getByRole('button', { name: '11月8日 予定あり' })
+  expect(future).toHaveTextContent(/^8$/)
+  expect(future.querySelector('.planned-mark')).not.toBeNull()
+  expect(marked.querySelector('.planned-mark')).toBeNull()
   expect(calendar().getByRole('button', { name: '11月4日' })).toHaveTextContent(/^4$/)
 
   fireEvent.click(screen.getByRole('button', { name: '前の月' }))
   expect(await calendar().findByRole('button', { name: '10月31日 その他' })).toBeInTheDocument()
 })
 
-test('凡例に、すべてのジャンルの点が表示される', () => {
+test('開いたとき、過去の日の予定は「食べた」になり、予定の印が消えてジャンルの点が付く', async () => {
+  seed([
+    { date: '2026-11-03', genre: 'western', status: 'planned' },
+    { date: '2026-11-05', genre: 'japanese', status: 'planned' },
+    { date: '2026-11-06', genre: 'chinese', status: 'planned' },
+  ])
+  openCalendar()
+  expect(await calendar().findByRole('button', { name: '11月3日 洋' })).toBeInTheDocument()
+  expect(await calendar().findByRole('button', { name: '11月5日 和' })).toBeInTheDocument()
+  // 今日の予定はそのまま
+  expect(calendar().getByRole('button', { name: '11月6日 予定あり' })).toBeInTheDocument()
+})
+
+test('凡例に、すべてのジャンルの点と予定の印が表示される', () => {
   openCalendar()
   const legend = within(screen.getByRole('region', { name: '点の凡例' }))
   const items = legend.getAllByRole('listitem').map((item) => item.textContent)
-  // 点の文字と名前
-  expect(items).toEqual(['和和', '洋洋', '中中', '他その他', '未未設定'])
+  // 点の文字と名前。予定の印は文字のない形だけ
+  expect(items).toEqual(['和和', '洋洋', '中中', '他その他', '未未設定', '予定あり'])
+  expect(legend.getAllByRole('listitem')[5].querySelector('.planned-mark')).not.toBeNull()
 })
 
-test('未来の日は選べない', () => {
+test('明日以降の日も選べ、その日の記録の画面で予定を追加・変更・削除できる', async () => {
+  vi.spyOn(window, 'confirm').mockReturnValue(true)
   openCalendar()
-  expect(calendar().getByRole('button', { name: '11月7日' })).toBeDisabled()
-  expect(calendar().getByRole('button', { name: '11月6日' })).toBeEnabled()
   fireEvent.click(screen.getByRole('button', { name: '次の月' }))
-  expect(calendar().getByRole('button', { name: '12月1日' })).toBeDisabled()
+  fireEvent.click(await calendar().findByRole('button', { name: '12月1日' }))
+
+  expect(window.location.hash).toBe('#/day/2026-12-01')
+  expect(screen.getByText('2026年12月1日（火）')).toBeInTheDocument()
+  const dinner = within(screen.getByRole('region', { name: '夜' }))
+  fireEvent.change(dinner.getByRole('textbox', { name: '新しい品名' }), { target: { value: '鍋' } })
+  fireEvent.click(dinner.getByRole('button', { name: '追加' }))
+  const item = await dinner.findByRole('button', { name: /鍋/ })
+  expect(item).toHaveTextContent('予定')
+  // 明日以降の日の品には、切り替えのボタンがない
+  expect(dinner.queryByRole('button', { name: '食べたにする' })).not.toBeInTheDocument()
+
+  fireEvent.click(item)
+  fireEvent.change(dinner.getByRole('textbox', { name: '品名' }), { target: { value: 'すき焼き' } })
+  fireEvent.click(dinner.getByRole('button', { name: '保存' }))
+  expect(await dinner.findByRole('button', { name: /すき焼き/ })).toHaveTextContent('予定')
+
+  fireEvent.click(screen.getByRole('button', { name: 'カレンダー' }))
+  expect(await calendar().findByRole('button', { name: '12月1日 予定あり' })).toBeInTheDocument()
+
+  fireEvent.click(calendar().getByRole('button', { name: '12月1日 予定あり' }))
+  fireEvent.click(await within(screen.getByRole('region', { name: '夜' })).findByRole('button', { name: /すき焼き/ }))
+  fireEvent.click(within(screen.getByRole('region', { name: '夜' })).getByRole('button', { name: '削除' }))
+  await vi.waitFor(() => {
+    expect(within(screen.getByRole('region', { name: '夜' })).queryByText('すき焼き')).not.toBeInTheDocument()
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'カレンダー' }))
+  expect(await calendar().findByRole('button', { name: '12月1日' })).toBeInTheDocument()
 })
 
 test('過去の日を選ぶとその日の記録の画面が開き、追加した品が戻ったカレンダーの点に出る', async () => {
@@ -119,8 +172,14 @@ test('アドレスに日付があれば、その日の記録の画面を開く',
   expect(await within(screen.getByRole('region', { name: '朝' })).findByRole('button', { name: /おにぎり/ })).toBeInTheDocument()
 })
 
-test('アドレスの日付が不正なときや未来の日のときは、今日の記録の画面を開く', () => {
-  for (const hash of ['#/day/2026-02-30', '#/day/hello', '#/day/2026-11-07']) {
+test('アドレスが明日以降の日なら、その日の記録の画面を開く', () => {
+  window.history.replaceState(null, '', '/#/day/2026-11-07')
+  render(<App today={TODAY} />)
+  expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
+})
+
+test('アドレスの日付が不正なときは、今日の記録の画面を開く', () => {
+  for (const hash of ['#/day/2026-02-30', '#/day/hello']) {
     window.history.replaceState(null, '', `/${hash}`)
     const view = render(<App today={TODAY} />)
     expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()

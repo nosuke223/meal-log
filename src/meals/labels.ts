@@ -1,5 +1,5 @@
 // 画面に表示する名前
-import type { DishType, Genre, MealType } from './mealRecord'
+import type { DishType, Genre, MealStatus, MealType } from './mealRecord'
 
 export const MEAL_TYPE_LABELS: Record<MealType, string> = {
   breakfast: '朝',
@@ -21,4 +21,9 @@ export const DISH_TYPE_LABELS: Record<DishType, string> = {
   side: '副菜',
   soup: '汁物',
   other: 'その他',
+}
+
+export const MEAL_STATUS_LABELS: Record<MealStatus, string> = {
+  planned: '予定',
+  eaten: '食べた',
 }

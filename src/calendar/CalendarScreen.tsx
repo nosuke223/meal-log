@@ -7,6 +7,7 @@ import {
   genreMarksByDate,
   monthOf,
   monthRange,
+  plannedDates,
   shiftMonth,
   type GenreMark,
 } from './calendarMonth'
@@ -17,6 +18,10 @@ type Props = {
   today: string
   /** 表示する月（YYYY-MM） */
   month: string
+  /** 保存データが画面の外で変わる（日が過ぎた予定の自動更新など）たびに変わる値。変わると読み直す */
+  revision?: number
+  /** 日が過ぎた予定の自動更新に失敗したときのエラー。あれば表示する */
+  autoUpdateError?: string | null
   onChangeMonth: (month: string) => void
   onSelectDate: (date: string) => void
   onOpenToday: () => void
@@ -45,10 +50,15 @@ function formatMonth(month: string): string {
   return `${year}年${monthNumber}月`
 }
 
-function dayLabel(date: string, marks: GenreMark[] | undefined): string {
+/** 予定の印の、凡例と読み上げに使う名前 */
+const PLANNED_NAME = '予定あり'
+
+function dayLabel(date: string, marks: GenreMark[] | undefined, planned: boolean): string {
   const [, month, day] = date.split('-').map(Number)
-  const base = `${month}月${day}日`
-  return marks ? `${base} ${marks.map((mark) => MARK_NAMES[mark]).join('・')}` : base
+  const parts = [`${month}月${day}日`]
+  if (marks) parts.push(marks.map((mark) => MARK_NAMES[mark]).join('・'))
+  if (planned) parts.push(PLANNED_NAME)
+  return parts.join(' ')
 }
 
 function Mark({ mark }: { mark: GenreMark }) {
@@ -59,10 +69,29 @@ function Mark({ mark }: { mark: GenreMark }) {
   )
 }
 
-/** 月表示のカレンダー。記録がある日に、出てきたジャンルの点を表示する */
-export function CalendarScreen({ repository, today, month, onChangeMonth, onSelectDate, onOpenToday }: Props) {
-  const [marksByDate, setMarksByDate] = useState<Map<string, GenreMark[]>>(new Map())
-  const [loadedMonth, setLoadedMonth] = useState<string | null>(null)
+/** 予定がある日の印。ジャンルの点（丸と角丸の四角）と違う、ひし形にする */
+function PlannedMark() {
+  return <span className="planned-mark" aria-hidden="true" />
+}
+
+type MonthMarks = {
+  month: string
+  genres: Map<string, GenreMark[]>
+  planned: Set<string>
+}
+
+/** 月表示のカレンダー。記録がある日に出てきたジャンルの点を、予定がある日に予定の印を表示する */
+export function CalendarScreen({
+  repository,
+  today,
+  month,
+  revision,
+  autoUpdateError,
+  onChangeMonth,
+  onSelectDate,
+  onOpenToday,
+}: Props) {
+  const [loaded, setLoaded] = useState<MonthMarks | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -72,20 +101,21 @@ export function CalendarScreen({ repository, today, month, onChangeMonth, onSele
       .listByDateRange(from, to)
       .then((records) => {
         if (cancelled) return
-        setMarksByDate(genreMarksByDate(records))
-        setLoadedMonth(month)
+        setLoaded({ month, genres: genreMarksByDate(records), planned: plannedDates(records) })
         setError(null)
       })
       .catch((cause: unknown) => {
         if (cancelled) return
-        setMarksByDate(new Map())
-        setLoadedMonth(month)
+        setLoaded({ month, genres: new Map(), planned: new Set() })
         setError(`記録を読み込めませんでした: ${messageOf(cause)}`)
       })
     return () => {
       cancelled = true
     }
-  }, [repository, month])
+  }, [repository, month, revision])
+
+  // 月を移った直後は、前の月の点を出さない
+  const current = loaded?.month === month ? loaded : null
 
   const weeks = buildMonthWeeks(month)
 
@@ -97,6 +127,11 @@ export function CalendarScreen({ repository, today, month, onChangeMonth, onSele
           今日
         </button>
       </header>
+      {autoUpdateError && (
+        <p role="alert" className="error">
+          {autoUpdateError}
+        </p>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
@@ -116,7 +151,7 @@ export function CalendarScreen({ repository, today, month, onChangeMonth, onSele
           今月
         </button>
       </div>
-      <table className="calendar" aria-label={formatMonth(month)} aria-busy={loadedMonth !== month}>
+      <table className="calendar" aria-label={formatMonth(month)} aria-busy={current === null}>
         <thead>
           <tr>
             {WEEKDAYS.map((weekday) => (
@@ -131,20 +166,22 @@ export function CalendarScreen({ repository, today, month, onChangeMonth, onSele
             <tr key={week.find((date) => date !== null)}>
               {week.map((date, index) => {
                 if (date === null) return <td key={`empty-${index}`} />
-                const marks = loadedMonth === month ? marksByDate.get(date) : undefined
+                const marks = current?.genres.get(date)
+                const planned = current?.planned.has(date) ?? false
                 const isToday = date === today
-                const isFuture = date > today
                 return (
                   <td key={date}>
                     <button
                       type="button"
                       className="day"
-                      aria-label={dayLabel(date, marks)}
+                      aria-label={dayLabel(date, marks, planned)}
                       aria-current={isToday ? 'date' : undefined}
-                      disabled={isFuture}
                       onClick={() => onSelectDate(date)}
                     >
-                      <span className="day-number">{Number(date.slice(8))}</span>
+                      <span className="day-head">
+                        <span className="day-number">{Number(date.slice(8))}</span>
+                        {planned && <PlannedMark />}
+                      </span>
                       {marks && (
                         <span className="marks">
                           {marks.map((mark) => (
@@ -168,8 +205,14 @@ export function CalendarScreen({ repository, today, month, onChangeMonth, onSele
               <span>{MARK_NAMES[mark]}</span>
             </li>
           ))}
+          <li>
+            <PlannedMark />
+            <span>{PLANNED_NAME}</span>
+          </li>
         </ul>
-        <p className="legend-note">点は「食べた」の記録のジャンルです（同じジャンルは何品あっても1つ）。未来の日は選べません。</p>
+        <p className="legend-note">
+          点は「食べた」の記録のジャンルです（同じジャンルは何品あっても1つ）。予定はひし形の印だけで、点には数えません。
+        </p>
       </section>
     </main>
   )

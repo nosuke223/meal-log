@@ -1,6 +1,6 @@
 import { expect, test } from 'vitest'
 import type { MealRecord } from '../meals/mealRecord'
-import { buildMonthWeeks, genreMarksByDate, isValidMonth, monthRange, shiftMonth } from './calendarMonth'
+import { buildMonthWeeks, genreMarksByDate, isValidMonth, monthRange, plannedDates, shiftMonth } from './calendarMonth'
 
 function record(fields: Partial<MealRecord>): MealRecord {
   return {
@@ -76,4 +76,15 @@ test('予定の記録は点に数えない', () => {
   ])
   expect(marks.get('2026-11-02')).toEqual(['western'])
   expect(marks.has('2026-11-05')).toBe(false)
+})
+
+test('予定の記録がある日だけを、予定のある日とする', () => {
+  const dates = plannedDates([
+    record({ date: '2026-11-02', status: 'planned' }),
+    record({ date: '2026-11-02', status: 'planned' }),
+    record({ date: '2026-11-02', status: 'eaten' }),
+    record({ date: '2026-11-03', status: 'eaten' }),
+    record({ date: '2026-11-20', status: 'planned' }),
+  ])
+  expect([...dates].sort()).toEqual(['2026-11-02', '2026-11-20'])
 })

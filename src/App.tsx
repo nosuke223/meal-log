@@ -14,10 +14,53 @@ type Props = {
   today?: string
 }
 
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 function App({ repository, today: fixedToday }: Props) {
   const [mealRepository] = useState(() => repository ?? createLocalStorageMealRepository())
   const today = useToday(fixedToday)
   const [hash, setHash] = useState(() => window.location.hash)
+  // 日が過ぎた予定を「食べた」にしたら上げて、画面に読み直させる
+  const [revision, setRevision] = useState(0)
+  // 日が過ぎた予定を「食べた」にできなかったときのエラー
+  const [autoUpdateError, setAutoUpdateError] = useState<string | null>(null)
+
+  // アプリを開いたとき、日付をまたいだとき、タブや画面に戻ってきたときに、過去の日の「予定」を「食べた」にする
+  useEffect(() => {
+    let cancelled = false
+    function completePastPlans() {
+      mealRepository
+        .markPlannedAsEatenBefore(today)
+        .then((updated) => {
+          if (cancelled) return
+          setAutoUpdateError(null)
+          if (updated.length > 0) setRevision((value) => value + 1)
+        })
+        .catch(async (cause: unknown) => {
+          // 読み込めないときは、各画面の読み込みでエラーを表示するので、ここでは表示しない。
+          // 読み込めるのに失敗したとき（書き込みだけが容量の上限などで失敗した）は、ここで表示する
+          const readable = await mealRepository.listByDate(today).then(
+            () => true,
+            () => false,
+          )
+          if (cancelled) return
+          setAutoUpdateError(readable ? `日が過ぎた予定を「食べた」にできませんでした: ${messageOf(cause)}` : null)
+        })
+    }
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') completePastPlans()
+    }
+    completePastPlans()
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', completePastPlans)
+    return () => {
+      cancelled = true
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', completePastPlans)
+    }
+  }, [mealRepository, today])
 
   // ブラウザの「戻る」「進む」や、アドレスの書き換えに合わせる
   useEffect(() => {
@@ -50,6 +93,8 @@ function App({ repository, today: fixedToday }: Props) {
         repository={mealRepository}
         today={today}
         month={route.month}
+        revision={revision}
+        autoUpdateError={autoUpdateError}
         onChangeMonth={(month) => navigate(calendarHash(month), true)}
         // 今日のマスは、「今日」ボタンと同じ、日付をまたぐと翌日に変わる今日の画面を開く
         onSelectDate={(date) => navigate(date === today ? todayHash() : dayHash(date))}
@@ -65,6 +110,9 @@ function App({ repository, today: fixedToday }: Props) {
       key={route.date ?? 'today'}
       repository={mealRepository}
       date={date}
+      today={today}
+      revision={revision}
+      autoUpdateError={autoUpdateError}
       onOpenCalendar={() => navigate(calendarHash(monthOf(date)))}
     />
   )

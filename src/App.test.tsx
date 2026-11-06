@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import App from './App'
 import { MEAL_STORAGE_KEY } from './meals/localStorageMealRepository'
 
@@ -165,6 +165,220 @@ test('今日を指定しないとき、日付をまたいだ後の読み込み�
   expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
   expect(await screen.findByRole('alert')).toHaveTextContent('記録を読み込めませんでした')
   expect(within(section('朝')).queryByRole('button', { name: /ごはん/ })).not.toBeInTheDocument()
+})
+
+type StoredRecord = { id: string; name: string; date: string; status: string; updatedAt: string }
+
+function storedRecords(): StoredRecord[] {
+  const data = JSON.parse(window.localStorage.getItem(MEAL_STORAGE_KEY) ?? '{"records":[]}') as {
+    records: StoredRecord[]
+  }
+  return data.records
+}
+
+function seed(records: { id: string; date: string; mealType: string; name: string; status: string }[]) {
+  const full = records.map((record) => ({
+    genre: null,
+    dishType: null,
+    createdAt: '2026-11-01T00:00:00.000Z',
+    updatedAt: '2026-11-01T00:00:00.000Z',
+    ...record,
+  }))
+  window.localStorage.setItem(MEAL_STORAGE_KEY, JSON.stringify({ version: 1, records: full }))
+}
+
+describe('予定と食べた', () => {
+  test('今日に追加した品は「予定」になり、1回のタップで「食べた」と「予定」を切り替えられる', async () => {
+    render(<App today={TODAY} />)
+    await addItem('朝', 'ごはん')
+    const morning = within(section('朝'))
+    expect(morning.getByRole('button', { name: /ごはん/ })).toHaveTextContent('予定')
+    expect(storedRecords().map((record) => record.status)).toEqual(['planned'])
+
+    fireEvent.click(morning.getByRole('button', { name: '食べたにする' }))
+    await vi.waitFor(() => {
+      expect(morning.getByRole('button', { name: /ごはん/ })).toHaveTextContent('食べた')
+    })
+    expect(storedRecords().map((record) => record.status)).toEqual(['eaten'])
+
+    fireEvent.click(morning.getByRole('button', { name: '予定に戻す' }))
+    await vi.waitFor(() => {
+      expect(morning.getByRole('button', { name: /ごはん/ })).toHaveTextContent('予定')
+    })
+    expect(storedRecords().map((record) => record.status)).toEqual(['planned'])
+  })
+
+  test('切り替えのボタンは、どの品のものかが分かる', async () => {
+    render(<App today={TODAY} />)
+    await addItem('朝', 'ごはん')
+    expect(within(section('朝')).getByRole('button', { name: '食べたにする' })).toHaveAccessibleDescription('ごはん')
+  })
+
+  test('過去の日に追加した品は「食べた」になり、切り替えのボタンがない', async () => {
+    window.history.replaceState(null, '', '/#/day/2026-11-01')
+    render(<App today={TODAY} />)
+    await addItem('昼', 'うどん')
+    const lunch = within(section('昼'))
+    expect(lunch.getByRole('button', { name: /うどん/ })).toHaveTextContent('食べた')
+    expect(lunch.queryByRole('button', { name: '食べたにする' })).not.toBeInTheDocument()
+    expect(lunch.queryByRole('button', { name: '予定に戻す' })).not.toBeInTheDocument()
+    expect(storedRecords().map((record) => [record.date, record.status])).toEqual([['2026-11-01', 'eaten']])
+  })
+
+  test('明日以降の日に追加した品は「予定」になり、切り替えのボタンがない', async () => {
+    window.history.replaceState(null, '', '/#/day/2026-11-07')
+    render(<App today={TODAY} />)
+    await addItem('夜', '鍋')
+    const dinner = within(section('夜'))
+    expect(dinner.getByRole('button', { name: /鍋/ })).toHaveTextContent('予定')
+    expect(dinner.queryByRole('button', { name: '食べたにする' })).not.toBeInTheDocument()
+    expect(storedRecords().map((record) => [record.date, record.status])).toEqual([['2026-11-07', 'planned']])
+  })
+
+  test('品の日付を変えると、その日に移り、未来の日は「予定」、過去の日は「食べた」、今日はそのときの状態のままになる', async () => {
+    seed([
+      { id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'eaten' },
+      { id: 'b', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' },
+      { id: 'c', date: '2026-11-03', mealType: 'dinner', name: 'カレー', status: 'eaten' },
+      { id: 'd', date: '2026-11-10', mealType: 'dinner', name: '鍋', status: 'planned' },
+    ])
+
+    async function changeDate(sectionName: string, name: string, date: string) {
+      fireEvent.click(await within(section(sectionName)).findByRole('button', { name: new RegExp(name) }))
+      const form = within(within(section(sectionName)).getByRole('form', { name: '品の変更' }))
+      fireEvent.change(form.getByLabelText('日付'), { target: { value: date } })
+      fireEvent.click(form.getByRole('button', { name: '保存' }))
+      await vi.waitFor(() => {
+        expect(within(section(sectionName)).queryByText(name)).not.toBeInTheDocument()
+      })
+    }
+
+    const view = render(<App today={TODAY} />)
+    // 今日の「食べた」を未来へ、今日の「予定」を過去へ
+    await changeDate('朝', 'ごはん', '2026-11-08')
+    await changeDate('昼', 'うどん', '2026-11-02')
+    view.unmount()
+
+    // 過去の「食べた」を今日へ（そのまま「食べた」）
+    window.history.replaceState(null, '', '/#/day/2026-11-03')
+    const past = render(<App today={TODAY} />)
+    await changeDate('夜', 'カレー', TODAY)
+    past.unmount()
+
+    // 未来の「予定」を今日へ（そのまま「予定」）
+    window.history.replaceState(null, '', '/#/day/2026-11-10')
+    render(<App today={TODAY} />)
+    await changeDate('夜', '鍋', TODAY)
+
+    const byId = new Map(storedRecords().map((record) => [record.id, [record.date, record.status]]))
+    expect(byId.get('a')).toEqual(['2026-11-08', 'planned'])
+    expect(byId.get('b')).toEqual(['2026-11-02', 'eaten'])
+    expect(byId.get('c')).toEqual([TODAY, 'eaten'])
+    expect(byId.get('d')).toEqual([TODAY, 'planned'])
+  })
+
+  test('日付が空のときは、変更を保存できない', async () => {
+    render(<App today={TODAY} />)
+    await addItem('朝', 'ごはん')
+    fireEvent.click(within(section('朝')).getByRole('button', { name: /ごはん/ }))
+    const form = within(within(section('朝')).getByRole('form', { name: '品の変更' }))
+    expect(form.getByLabelText('日付')).toHaveValue(TODAY)
+    fireEvent.change(form.getByLabelText('日付'), { target: { value: '' } })
+    expect(form.getByRole('button', { name: '保存' })).toBeDisabled()
+  })
+})
+
+describe('日が過ぎた予定', () => {
+  test('アプリを開いたとき、過去の日の「予定」を「食べた」にし、更新日時も変える', async () => {
+    seed([
+      { id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' },
+      { id: 'today', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' },
+      { id: 'future', date: '2026-11-07', mealType: 'lunch', name: 'うどん', status: 'planned' },
+    ])
+    render(<App today={TODAY} />)
+    await vi.waitFor(() => {
+      expect(storedRecords().find((record) => record.id === 'past')?.status).toBe('eaten')
+    })
+    const byId = new Map(storedRecords().map((record) => [record.id, record]))
+    expect(Date.parse(byId.get('past')!.updatedAt)).toBeGreaterThan(Date.parse('2026-11-01T00:00:00.000Z'))
+    expect(byId.get('today')).toMatchObject({ status: 'planned', updatedAt: '2026-11-01T00:00:00.000Z' })
+    expect(byId.get('future')).toMatchObject({ status: 'planned', updatedAt: '2026-11-01T00:00:00.000Z' })
+  })
+
+  test('過去の日の画面を開いたとき、日が過ぎた予定は「食べた」で表示される', async () => {
+    seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
+    window.history.replaceState(null, '', '/#/day/2026-11-05')
+    render(<App today={TODAY} />)
+    await vi.waitFor(() => {
+      expect(within(section('夜')).getByRole('button', { name: /カレー/ })).toHaveTextContent('食べた')
+    })
+  })
+
+  test('タブや画面に戻ってきたときにも、過去の日の「予定」を「食べた」にする', async () => {
+    render(<App today={TODAY} />)
+    // 開いた後に、別のタブなどで過去の日の予定が保存された
+    seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
+
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await vi.waitFor(() => {
+      expect(storedRecords()[0].status).toBe('eaten')
+    })
+
+    seed([{ id: 'past2', date: '2026-11-04', mealType: 'dinner', name: '鍋', status: 'planned' }])
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await vi.waitFor(() => {
+      expect(storedRecords()[0].status).toBe('eaten')
+    })
+  })
+
+  test('書き込みだけに失敗したときは、エラーを表示し、次に成功したら消す', async () => {
+    seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError')
+    })
+    render(<App today={TODAY} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('日が過ぎた予定を「食べた」にできませんでした')
+    expect(storedRecords()[0].status).toBe('planned')
+
+    setItem.mockRestore()
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await vi.waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+    expect(storedRecords()[0].status).toBe('eaten')
+  })
+
+  test('カレンダーの画面でも、書き込みに失敗したときはエラーを表示する', async () => {
+    seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError')
+    })
+    window.history.replaceState(null, '', '/#/calendar/2026-11')
+    render(<App today={TODAY} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('日が過ぎた予定を「食べた」にできませんでした')
+  })
+
+  test('今日を指定しないとき、日付をまたぐと、前の日の「予定」が「食べた」になる', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
+    render(<App />)
+    await addItem('夜', 'カレー')
+    expect(storedRecords().map((record) => record.status)).toEqual(['planned'])
+
+    act(() => {
+      vi.setSystemTime(new Date(2026, 10, 7, 0, 0, 10))
+      vi.advanceTimersByTime(30_000)
+    })
+    await vi.waitFor(() => {
+      expect(storedRecords().map((record) => record.status)).toEqual(['eaten'])
+    })
+  })
 })
 
 test('保存先へのアクセスが拒否される環境でも、画面を表示し、エラーを表示する', async () => {

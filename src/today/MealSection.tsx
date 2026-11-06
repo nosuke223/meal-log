@@ -16,12 +16,14 @@ type Props = {
   mealType: MealType
   /** この区分の記録（作成した順） */
   records: MealRecord[]
+  /** 今日（YYYY-MM-DD） */
+  today: string
   onAdd: (mealType: MealType, name: string, genre: Genre | null, dishType: DishType | null) => Promise<boolean>
   onUpdate: (id: string, changes: MealChanges) => Promise<boolean>
   onDelete: (id: string) => Promise<boolean>
 }
 
-export function MealSection({ mealType, records, onAdd, onUpdate, onDelete }: Props) {
+export function MealSection({ mealType, records, today, onAdd, onUpdate, onDelete }: Props) {
   const headingId = useId()
   const [name, setName] = useState('')
   // undefined は「選んでいない」。その間は、直前の品のジャンルが選ばれた状態にする
@@ -48,7 +50,7 @@ export function MealSection({ mealType, records, onAdd, onUpdate, onDelete }: Pr
       <h2 id={headingId}>{MEAL_TYPE_LABELS[mealType]}</h2>
       <ul className="items">
         {records.map((record) => (
-          <MealItem key={record.id} record={record} onUpdate={onUpdate} onDelete={onDelete} />
+          <MealItem key={record.id} record={record} today={today} onUpdate={onUpdate} onDelete={onDelete} />
         ))}
       </ul>
       <form
