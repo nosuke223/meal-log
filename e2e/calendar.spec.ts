@@ -39,6 +39,11 @@ function section(page: Page, name: string) {
   return page.getByRole('region', { name, exact: true })
 }
 
+/** カレンダーの下の、選んだ日の品の一覧 */
+function preview(page: Page) {
+  return page.getByRole('region', { name: '選んだ日の品' })
+}
+
 async function expectNoHorizontalScroll(page: Page) {
   const overflow = await page.evaluate<number>(
     'document.documentElement.scrollWidth - document.documentElement.clientWidth',
@@ -57,17 +62,91 @@ test('最初は今日の記録の画面で、ボタンでカレンダーを開�
   await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
   await page.getByRole('button', { name: 'カレンダー' }).click()
 
-  await expect(page.getByRole('heading', { name: '2026年11月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年11月', exact: true })).toBeVisible()
   await expect(day(page, '11月18日')).toHaveAttribute('aria-current', 'date')
+  // 今日の画面から開くと、今日を選んでいる
+  await expect(page).toHaveURL(/#\/calendar\/2026-11-18$/)
+  await expect(day(page, '11月18日')).toHaveAttribute('aria-pressed', 'true')
+  await expect(preview(page).getByRole('heading', { name: '2026年11月18日（水）' })).toBeVisible()
   await expectNoHorizontalScroll(page)
 
+  // ほかの月は何も選ばない
   await page.getByRole('button', { name: '前の月' }).click()
-  await expect(page.getByRole('heading', { name: '2026年10月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年10月', exact: true })).toBeVisible()
+  await expect(page).toHaveURL(/#\/calendar\/2026-10$/)
+  await expect(preview(page)).toHaveText('日付を選ぶと、その日の品が表示されます')
+  await expect(calendar(page).getByRole('button', { pressed: true })).toHaveCount(0)
   await page.getByRole('button', { name: '次の月' }).click()
   await page.getByRole('button', { name: '次の月' }).click()
-  await expect(page.getByRole('heading', { name: '2026年12月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年12月', exact: true })).toBeVisible()
   await page.getByRole('button', { name: '今月' }).click()
-  await expect(page.getByRole('heading', { name: '2026年11月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年11月', exact: true })).toBeVisible()
+  await expect(day(page, '11月18日')).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('日のマスをタップすると、画面を移らずにその日の品が区分ごとに表示され、スクロールせずに見える', async ({ page }) => {
+  await page.goto('/#/calendar/2026-11')
+  const length = await page.evaluate<number>('history.length')
+  await day(page, '11月3日 和・中').click()
+
+  await expect(page).toHaveURL(/#\/calendar\/2026-11-03$/)
+  await expect(page.getByRole('heading', { name: '2026年11月', exact: true })).toBeVisible()
+  await expect(day(page, '11月3日 和・中')).toHaveAttribute('aria-pressed', 'true')
+  await expect(day(page, '11月18日')).toHaveAttribute('aria-pressed', 'false')
+  // 選んだ日は、今日（青の枠と背景）とは別に、内側の枠で示す
+  await expect(day(page, '11月3日 和・中')).toHaveCSS('box-shadow', /inset/)
+  await expect(day(page, '11月18日')).toHaveCSS('box-shadow', 'none')
+
+  const list = preview(page)
+  await expect(list.getByRole('heading', { name: '2026年11月3日（火）' })).toBeVisible()
+  await expect(list.getByRole('heading', { level: 3 })).toHaveText(['朝', '昼', '夜'])
+  await expect(list.getByRole('listitem')).toHaveText(['✓食べたごはん和', '✓食べたラーメン中', '✓食べた餃子中'])
+  // 3品の一覧が、スマホの縦画面で下にスクロールせずに見える
+  await expect(list.getByRole('listitem').last()).toBeInViewport()
+  await expect(list.getByRole('button', { name: 'この日の記録を開く' })).toBeInViewport()
+  await expectNoHorizontalScroll(page)
+
+  // 別の日を選び直しても、履歴は増えない
+  await day(page, '11月4日').click()
+  await expect(list.getByRole('heading', { name: '2026年11月4日（水）' })).toBeVisible()
+  await expect(list.getByText('記録はありません')).toBeVisible()
+  await expect(list.getByRole('listitem')).toHaveCount(0)
+  expect(await page.evaluate<number>('history.length')).toBe(length)
+
+  // 読み込み直しても、同じ日を選んでいる
+  await page.reload()
+  await expect(day(page, '11月4日')).toHaveAttribute('aria-pressed', 'true')
+  await expect(list.getByRole('heading', { name: '2026年11月4日（水）' })).toBeVisible()
+})
+
+test('日が過ぎた予定は、一覧でも「食べた」になる。明日以降の予定は「予定」のまま', async ({ page }) => {
+  await page.goto('/#/calendar/2026-11-05')
+  await expect(preview(page).getByRole('listitem')).toHaveText(['✓食べたパスタ洋'])
+
+  await page.evaluate(
+    `window.localStorage.setItem('meal-log:meals', ${JSON.stringify(
+      storedData([{ date: '2026-11-20', mealType: 'dinner', name: '鍋', genre: 'japanese', status: 'planned' }]),
+    )})`,
+  )
+  await page.goto('/#/calendar/2026-11-20')
+  await page.reload()
+  await expect(preview(page).getByRole('listitem')).toHaveText(['○予定鍋和'])
+})
+
+test('実在しない日付のアドレスでは、今月のカレンダーが今日を選んだ状態で開く', async ({ page }) => {
+  await page.goto('/#/calendar/2026-02-30')
+  await page.reload()
+  await expect(page.getByRole('heading', { name: '2026年11月', exact: true })).toBeVisible()
+  await expect(day(page, '11月18日')).toHaveAttribute('aria-pressed', 'true')
+})
+
+test('記録の画面の「カレンダー」ボタンは、その日を選んだカレンダーを開く', async ({ page }) => {
+  await page.goto('/#/day/2026-10-31')
+  await page.reload()
+  await page.getByRole('button', { name: 'カレンダー' }).click()
+  await expect(page).toHaveURL(/#\/calendar\/2026-10-31$/)
+  await expect(day(page, '10月31日 洋')).toHaveAttribute('aria-pressed', 'true')
+  await expect(preview(page).getByRole('listitem')).toHaveText(['✓食べたピザ洋'])
 })
 
 test('記録がある日にジャンルの点が1つずつ付き、凡例があり、明日以降の日も選べる', async ({ page }) => {
@@ -97,9 +176,10 @@ test('開いたとき、過去の日の予定は「食べた」になり、予�
   await expect(passed.locator('.planned-mark')).toHaveCount(0)
 })
 
-test('過去の日を開いて品を追加・変更・削除でき、読み込み直しても同じ日が開き、「戻る」で点が更新されたカレンダーに戻る', async ({ page }) => {
+test('一覧のボタンで過去の日を開いて品を追加・変更・削除でき、読み込み直しても同じ日が開き、「戻る」で点と一覧が更新されたカレンダーに戻る', async ({ page }) => {
   await page.goto('/#/calendar/2026-11')
   await day(page, '11月3日 和・中').click()
+  await preview(page).getByRole('button', { name: 'この日の記録を開く' }).click()
 
   await expect(page).toHaveURL(/#\/day\/2026-11-03$/)
   await expect(page.getByText('2026年11月3日（火）')).toBeVisible()
@@ -134,24 +214,32 @@ test('過去の日を開いて品を追加・変更・削除でき、読み込�
   await expectNoHorizontalScroll(page)
 
   await page.goBack()
-  await expect(page.getByRole('heading', { name: '2026年11月' })).toBeVisible()
-  await expect(day(page, '11月3日 洋・未設定')).toBeVisible()
+  await expect(page).toHaveURL(/#\/calendar\/2026-11-03$/)
+  await expect(page.getByRole('heading', { name: '2026年11月', exact: true })).toBeVisible()
+  await expect(day(page, '11月3日 洋・未設定')).toHaveAttribute('aria-pressed', 'true')
+  await expect(preview(page).getByRole('heading', { level: 3 })).toHaveText(['朝', '間食'])
+  await expect(preview(page).getByRole('listitem')).toHaveText(['✓食べたごはん', '✓食べたケーキ洋'])
 })
 
-test('前の月の日を開いて「戻る」と、その月のカレンダーに戻る', async ({ page }) => {
+test('前の月の日を2回タップして開き、「戻る」と、その日を選んだその月のカレンダーに戻る', async ({ page }) => {
   await page.getByRole('button', { name: 'カレンダー' }).click()
   await page.getByRole('button', { name: '前の月' }).click()
   await day(page, '10月31日 洋').click()
+  await expect(day(page, '10月31日 洋')).toHaveAttribute('aria-pressed', 'true')
+  await day(page, '10月31日 洋').click()
+  await expect(page).toHaveURL(/#\/day\/2026-10-31$/)
   await expect(section(page, '昼').getByRole('button', { name: /ピザ/ })).toBeVisible()
 
   await page.goBack()
-  await expect(page.getByRole('heading', { name: '2026年10月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年10月', exact: true })).toBeVisible()
+  await expect(day(page, '10月31日 洋')).toHaveAttribute('aria-pressed', 'true')
+  await expect(preview(page).getByRole('listitem')).toHaveText(['✓食べたピザ洋'])
 })
 
 test('カレンダーのアドレスを直接開いた状態から、「今日」ボタンで今日の記録の画面に戻れる', async ({ page }) => {
   await page.goto('/#/calendar/2026-10')
   await page.reload()
-  await expect(page.getByRole('heading', { name: '2026年10月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年10月', exact: true })).toBeVisible()
   await expectNoHorizontalScroll(page)
 
   await page.getByRole('button', { name: '今日', exact: true }).click()
@@ -161,12 +249,21 @@ test('カレンダーのアドレスを直接開いた状態から、「今日�
 
   // 履歴を増やすので、「戻る」でカレンダーに戻る
   await page.goBack()
-  await expect(page.getByRole('heading', { name: '2026年10月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年10月', exact: true })).toBeVisible()
 })
 
-test('今日のマスを選ぶと、「今日」ボタンと同じ今日の記録の画面が開く', async ({ page }) => {
+test('今日は、選んでいるマスのタップでも一覧のボタンでも、「今日」ボタンと同じ今日の記録の画面が開く', async ({ page }) => {
+  // 今月を開いたときは今日を選んでいるので、1回のタップで開く
   await page.goto('/#/calendar/2026-11')
   await day(page, '11月18日').click()
+  await expect(page).toHaveURL(/#\/$/)
+  await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
+
+  await page.goBack()
+  await day(page, '11月4日').click()
+  await day(page, '11月18日').click()
+  await expect(page).toHaveURL(/#\/calendar\/2026-11-18$/)
+  await preview(page).getByRole('button', { name: 'この日の記録を開く' }).click()
   await expect(page).toHaveURL(/#\/$/)
   await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
 })
@@ -184,7 +281,8 @@ test('アドレスの日付が不正なときは、今日の記録の画面が�
 
 test('パソコンの画面の大きさでも、カレンダーが崩れない', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
-  await page.goto('/#/calendar/2026-11')
+  await page.goto('/#/calendar/2026-11-03')
   await expect(day(page, '11月3日 和・中')).toBeVisible()
+  await expect(preview(page).getByRole('listitem')).toHaveCount(3)
   await expectNoHorizontalScroll(page)
 })
