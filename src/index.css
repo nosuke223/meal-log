@@ -55,7 +55,49 @@ h2 {
 }
 
 .item {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
   margin-bottom: 6px;
+}
+
+.item > .edit-form {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 予定の品は、枠を点線にする（札の文字と記号でも区別する） */
+.item-planned .item-button {
+  background: #f5f3ff;
+  border-style: dashed;
+  border-color: #6d28d9;
+}
+
+.status {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  padding: 0 8px;
+  font-size: 0.85rem;
+  border-radius: 4px;
+}
+
+.status-planned {
+  color: #6d28d9;
+  background: #fff;
+  border: 1px dashed #6d28d9;
+}
+
+.status-eaten {
+  color: #fff;
+  background: #047857;
+  border: 1px solid #047857;
+}
+
+.toggle {
+  flex: none;
+  padding: 0 10px;
+  font-size: 0.9rem;
 }
 
 button,
@@ -89,10 +131,11 @@ button.danger {
 
 .item-button {
   display: flex;
+  flex: 1;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
-  width: 100%;
+  min-width: 0;
   text-align: left;
 }
 
@@ -150,6 +193,15 @@ button.danger {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.date-input {
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 10px;
+  font: inherit;
+  border: 1px solid #888;
+  border-radius: 8px;
 }
 
 .actions {
@@ -214,11 +266,20 @@ button.danger {
   font-weight: bold;
 }
 
-.day:disabled {
-  color: #888;
-  background: #f0f0f0;
-  border-style: dashed;
-  opacity: 1;
+.day-head {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+/* 予定がある日の印。ジャンルの点（丸と角丸の四角）と形を変えて、中抜きのひし形にする */
+.planned-mark {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border: 2px solid #6d28d9;
+  transform: rotate(45deg);
 }
 
 .marks {

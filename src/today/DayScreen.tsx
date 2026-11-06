@@ -8,12 +8,17 @@ import {
   type MealType,
 } from '../meals/mealRecord'
 import type { MealRepository } from '../meals/mealRepository'
+import { statusForDate } from '../meals/mealStatus'
 import { MealSection } from './MealSection'
 
 type Props = {
   repository: MealRepository
   /** 表示する日（YYYY-MM-DD） */
   date: string
+  /** 今日（YYYY-MM-DD）。状態（予定／食べた）の決まりに使う */
+  today: string
+  /** 保存データが画面の外で変わる（日が過ぎた予定の自動更新など）たびに変わる値。変わると読み直す */
+  revision?: number
   onOpenCalendar: () => void
 }
 
@@ -30,7 +35,7 @@ function messageOf(error: unknown): string {
 }
 
 /** 1日分の記録の画面。追加・変更・削除ができる */
-export function DayScreen({ repository, date, onOpenCalendar }: Props) {
+export function DayScreen({ repository, date, today, revision, onOpenCalendar }: Props) {
   const [records, setRecords] = useState<MealRecord[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -51,7 +56,7 @@ export function DayScreen({ repository, date, onOpenCalendar }: Props) {
     return () => {
       cancelled = true
     }
-  }, [repository, date])
+  }, [repository, date, revision])
 
   /** 保存の操作を行い、一覧を読み直す。成功したら true */
   async function run(action: () => Promise<unknown>): Promise<boolean> {
@@ -67,7 +72,9 @@ export function DayScreen({ repository, date, onOpenCalendar }: Props) {
   }
 
   function add(mealType: MealType, name: string, genre: Genre | null, dishType: DishType | null) {
-    return run(() => repository.create({ date, mealType, name, genre, dishType, status: 'eaten' }))
+    return run(() =>
+      repository.create({ date, mealType, name, genre, dishType, status: statusForDate(date, today) }),
+    )
   }
 
   function update(id: string, changes: MealChanges) {
@@ -101,6 +108,7 @@ export function DayScreen({ repository, date, onOpenCalendar }: Props) {
           key={mealType}
           mealType={mealType}
           records={records.filter((record) => record.mealType === mealType)}
+          today={today}
           onAdd={add}
           onUpdate={update}
           onDelete={remove}
