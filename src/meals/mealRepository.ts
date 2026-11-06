@@ -23,6 +23,14 @@ export interface MealRepository {
    * 更新した記録の updatedAt は変わる。更新した記録を返す（なければ空）
    */
   markPlannedAsEatenBefore(date: string): Promise<MealRecord[]>
+  /** すべての記録を取得する（書き出し用） */
+  listAll(): Promise<MealRecord[]>
+  /**
+   * 記録を、ID と作成・更新の日時を保ったまま一括で保存する（読み込み用）。
+   * 同じ ID の記録があれば渡した記録で置き換え、なければ追加する。渡していない記録は変えない。
+   * 全部保存するか、何も保存しないかのどちらか（1件でも不正、または保存に失敗したら、保存データは元のまま）
+   */
+  importRecords(records: MealRecord[]): Promise<void>
 }
 
 export class MealNotFoundError extends Error {

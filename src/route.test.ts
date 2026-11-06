@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { parseHash, todayHash } from './route'
+import { dataHash, parseHash, todayHash } from './route'
 
 const TODAY = '2026-11-06'
 
@@ -30,4 +30,9 @@ test('カレンダーのハッシュは、その月にする。月がない・�
   expect(parseHash('#/calendar/2026-09', TODAY)).toEqual({ screen: 'calendar', month: '2026-09' })
   expect(parseHash('#/calendar', TODAY)).toEqual({ screen: 'calendar', month: '2026-11' })
   expect(parseHash('#/calendar/2026-13', TODAY)).toEqual({ screen: 'calendar', month: '2026-11' })
+})
+
+test('データのハッシュは、データの画面にする', () => {
+  expect(dataHash()).toBe('#/data')
+  expect(parseHash(dataHash(), TODAY)).toEqual({ screen: 'data' })
 })
