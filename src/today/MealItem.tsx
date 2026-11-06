@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { DISH_TYPE_LABELS, GENRE_LABELS, MEAL_STATUS_LABELS, MEAL_TYPE_LABELS } from '../meals/labels'
+import { DISH_TYPE_LABELS, GENRE_LABELS, MEAL_TYPE_LABELS } from '../meals/labels'
 import {
   DISH_TYPES,
   GENRES,
@@ -13,6 +13,7 @@ import {
 } from '../meals/mealRecord'
 import { canToggleStatus, statusForDate } from '../meals/mealStatus'
 import { ChoiceButtons } from './ChoiceButtons'
+import { StatusBadge } from './StatusBadge'
 
 type Props = {
   record: MealRecord
@@ -21,9 +22,6 @@ type Props = {
   onUpdate: (id: string, changes: MealChanges) => Promise<boolean>
   onDelete: (id: string) => Promise<boolean>
 }
-
-/** 状態の札に、文字と並べて書く記号（色だけに頼らず区別できるようにする） */
-const STATUS_SYMBOLS = { planned: '○', eaten: '✓' } as const
 
 export function MealItem({ record, today, onUpdate, onDelete }: Props) {
   const nameId = useId()
@@ -40,10 +38,7 @@ export function MealItem({ record, today, onUpdate, onDelete }: Props) {
     return (
       <li className={`item item-${record.status}`}>
         <button type="button" className="item-button" onClick={() => setEditing(true)}>
-          <span className={`status status-${record.status}`}>
-            <span aria-hidden="true">{STATUS_SYMBOLS[record.status]}</span>
-            {MEAL_STATUS_LABELS[record.status]}
-          </span>
+          <StatusBadge status={record.status} />
           <span className="item-name" id={nameId}>
             {record.name}
           </span>

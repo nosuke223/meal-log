@@ -1,6 +1,14 @@
 import { expect, test } from 'vitest'
 import type { MealRecord } from '../meals/mealRecord'
-import { buildMonthWeeks, genreMarksByDate, isValidMonth, monthRange, plannedDates, shiftMonth } from './calendarMonth'
+import {
+  buildMonthWeeks,
+  genreMarksByDate,
+  isValidMonth,
+  mealsOfDay,
+  monthRange,
+  plannedDates,
+  shiftMonth,
+} from './calendarMonth'
 
 function record(fields: Partial<MealRecord>): MealRecord {
   return {
@@ -87,4 +95,26 @@ test('予定の記録がある日だけを、予定のある日とする', () =>
     record({ date: '2026-11-20', status: 'planned' }),
   ])
   expect([...dates].sort()).toEqual(['2026-11-02', '2026-11-20'])
+})
+
+test('選んだ日の品を、区分の順 → 作った順にまとめ、品がない区分は含めない（予定も含める）', () => {
+  const groups = mealsOfDay(
+    [
+      record({ id: 'snack', date: '2026-11-03', mealType: 'snack', createdAt: '2026-11-03T01:00:00.000Z' }),
+      record({ id: 'dinner-late', date: '2026-11-03', mealType: 'dinner', createdAt: '2026-11-03T09:00:00.000Z' }),
+      record({ id: 'other-day', date: '2026-11-04', mealType: 'lunch' }),
+      record({ id: 'breakfast', date: '2026-11-03', mealType: 'breakfast', status: 'planned' }),
+      record({ id: 'dinner-early', date: '2026-11-03', mealType: 'dinner', createdAt: '2026-11-03T08:00:00.000Z' }),
+    ],
+    '2026-11-03',
+  )
+  expect(groups.map((group) => [group.mealType, group.records.map((item) => item.id)])).toEqual([
+    ['breakfast', ['breakfast']],
+    ['dinner', ['dinner-early', 'dinner-late']],
+    ['snack', ['snack']],
+  ])
+})
+
+test('品がない日は、区分を1つも含めない', () => {
+  expect(mealsOfDay([record({ date: '2026-11-04' })], '2026-11-03')).toEqual([])
 })

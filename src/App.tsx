@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import { CalendarScreen } from './calendar/CalendarScreen'
-import { monthOf } from './calendar/calendarMonth'
 import { createLocalStorageMealRepository } from './meals/localStorageMealRepository'
 import type { MealRepository } from './meals/mealRepository'
 import { DataScreen } from './data/DataScreen'
-import { calendarHash, dataHash, dayHash, parseHash, todayHash } from './route'
+import { calendarDateHash, calendarHash, dataHash, dayHash, parseHash, todayHash } from './route'
 import { DayScreen } from './today/DayScreen'
 import { useToday } from './useToday'
 
@@ -98,11 +97,14 @@ function App({ repository, today: fixedToday }: Props) {
         repository={mealRepository}
         today={today}
         month={route.month}
+        selected={route.selected}
         revision={revision}
         autoUpdateError={autoUpdateError}
         onChangeMonth={(month) => navigate(calendarHash(month), true)}
-        // 今日のマスは、「今日」ボタンと同じ、日付をまたぐと翌日に変わる今日の画面を開く
-        onSelectDate={(date) => navigate(date === today ? todayHash() : dayHash(date))}
+        // 日を選ぶのは画面を移らない操作なので、月を移るときと同じく履歴を増やさない
+        onSelectDate={(date) => navigate(calendarDateHash(date), true)}
+        // 今日は、「今日」ボタンと同じ、日付をまたぐと翌日に変わる今日の画面を開く
+        onOpenDate={(date) => navigate(date === today ? todayHash() : dayHash(date))}
         onOpenToday={() => navigate(todayHash())}
       />
     )
@@ -118,7 +120,7 @@ function App({ repository, today: fixedToday }: Props) {
       today={today}
       revision={revision}
       autoUpdateError={autoUpdateError}
-      onOpenCalendar={() => navigate(calendarHash(monthOf(date)))}
+      onOpenCalendar={() => navigate(calendarDateHash(date))}
       onOpenData={() => navigate(dataHash())}
     />
   )

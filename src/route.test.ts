@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { dataHash, parseHash, todayHash } from './route'
+import { calendarDateHash, calendarHash, dataHash, parseHash, todayHash } from './route'
 
 const TODAY = '2026-11-06'
 
@@ -26,10 +26,31 @@ test('不正な日付は、今日の記録の画面にする', () => {
   }
 })
 
-test('カレンダーのハッシュは、その月にする。月がない・不正なときは今月にする', () => {
-  expect(parseHash('#/calendar/2026-09', TODAY)).toEqual({ screen: 'calendar', month: '2026-09' })
-  expect(parseHash('#/calendar', TODAY)).toEqual({ screen: 'calendar', month: '2026-11' })
-  expect(parseHash('#/calendar/2026-13', TODAY)).toEqual({ screen: 'calendar', month: '2026-11' })
+test('カレンダーの月のハッシュは、その月にする。今月なら今日を選び、ほかの月は何も選ばない', () => {
+  expect(parseHash('#/calendar/2026-09', TODAY)).toEqual({ screen: 'calendar', month: '2026-09', selected: null })
+  expect(parseHash('#/calendar/2027-11', TODAY)).toEqual({ screen: 'calendar', month: '2027-11', selected: null })
+  expect(parseHash(calendarHash('2026-11'), TODAY)).toEqual({
+    screen: 'calendar',
+    month: '2026-11',
+    selected: '2026-11-06',
+  })
+})
+
+test('カレンダーの日付のハッシュは、その日の月にし、その日を選ぶ（過去・今日・明日以降）', () => {
+  for (const date of ['2026-10-03', '2026-11-06', '2026-11-07', '2027-02-28']) {
+    expect(parseHash(calendarDateHash(date), TODAY)).toEqual({
+      screen: 'calendar',
+      month: date.slice(0, 7),
+      selected: date,
+    })
+  }
+  expect(calendarDateHash('2026-11-03')).toBe('#/calendar/2026-11-03')
+})
+
+test('カレンダーの月や日付がない・不正なときは、今月にし、今日を選ぶ', () => {
+  for (const hash of ['#/calendar', '#/calendar/', '#/calendar/2026-13', '#/calendar/2026-02-30', '#/calendar/2026-11-6']) {
+    expect(parseHash(hash, TODAY)).toEqual({ screen: 'calendar', month: '2026-11', selected: '2026-11-06' })
+  }
 })
 
 test('データのハッシュは、データの画面にする', () => {

@@ -1,5 +1,12 @@
-// カレンダーの月の計算と、日ごとのジャンルの点の算出
-import { GENRES, type Genre, type MealRecord } from '../meals/mealRecord'
+// カレンダーの月の計算と、日ごとのジャンルの点、選んだ日の品の一覧の算出
+import {
+  compareMealRecords,
+  GENRES,
+  MEAL_TYPES,
+  type Genre,
+  type MealRecord,
+  type MealType,
+} from '../meals/mealRecord'
 
 /** 点の種類。unset はジャンルが未設定の品 */
 export type GenreMark = Genre | 'unset'
@@ -93,4 +100,19 @@ export function genreMarksByDate(records: readonly MealRecord[]): Map<string, Ge
 /** 「予定」の記録がある日（YYYY-MM-DD） */
 export function plannedDates(records: readonly MealRecord[]): Set<string> {
   return new Set(records.filter((record) => record.status === 'planned').map((record) => record.date))
+}
+
+/** 1つの区分の品 */
+export type MealGroup = { mealType: MealType; records: MealRecord[] }
+
+/**
+ * date の日の品を、区分（朝・昼・夜・間食）ごとにまとめる。
+ * 区分の中は作った順に並べ、品がない区分は含まない
+ */
+export function mealsOfDay(records: readonly MealRecord[], date: string): MealGroup[] {
+  const ofDay = records.filter((record) => record.date === date).sort(compareMealRecords)
+  return MEAL_TYPES.map((mealType) => ({
+    mealType,
+    records: ofDay.filter((record) => record.mealType === mealType),
+  })).filter((group) => group.records.length > 0)
 }

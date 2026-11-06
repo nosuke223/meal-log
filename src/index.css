@@ -223,14 +223,9 @@ button.danger {
   text-align: center;
 }
 
-.month-nav-sub {
-  display: flex;
-  justify-content: center;
-  margin: 8px 0;
-}
-
 .calendar {
   width: 100%;
+  margin-top: 4px;
   table-layout: fixed;
   border-spacing: 2px;
 }
@@ -252,7 +247,7 @@ button.danger {
   gap: 2px;
   align-items: center;
   width: 100%;
-  min-height: 56px;
+  min-height: 48px;
   padding: 2px;
   border-color: #ccc;
 }
@@ -264,6 +259,76 @@ button.danger {
 
 .day[aria-current='date'] .day-number {
   font-weight: bold;
+}
+
+/* 選んだ日。今日の強調（青の枠と背景）と別に、橙の太い内側の枠で示す（今日を選んだときは両方が見える） */
+.day[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 3px #c2410c;
+}
+
+.day[aria-pressed='true']:not([aria-current='date']) {
+  background: #ffedd5;
+}
+
+.day-preview {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.day-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.day-preview-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.day-preview-note {
+  margin: 4px 0 0;
+  color: #555;
+}
+
+/* 区分の名前を左に、品を右に並べて、縦の長さを抑える */
+.preview-group {
+  display: grid;
+  grid-template-columns: 2.5em minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 6px;
+  margin-top: 6px;
+  border-top: 1px solid #eee;
+}
+
+.preview-group h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.75;
+  color: #555;
+}
+
+.preview-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.preview-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.preview-item:last-child {
+  margin-bottom: 0;
 }
 
 .day-head {
