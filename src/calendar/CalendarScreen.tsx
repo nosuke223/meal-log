@@ -20,6 +20,8 @@ type Props = {
   month: string
   /** 保存データが画面の外で変わる（日が過ぎた予定の自動更新など）たびに変わる値。変わると読み直す */
   revision?: number
+  /** 日が過ぎた予定の自動更新に失敗したときのエラー。あれば表示する */
+  autoUpdateError?: string | null
   onChangeMonth: (month: string) => void
   onSelectDate: (date: string) => void
   onOpenToday: () => void
@@ -84,6 +86,7 @@ export function CalendarScreen({
   today,
   month,
   revision,
+  autoUpdateError,
   onChangeMonth,
   onSelectDate,
   onOpenToday,
@@ -124,6 +127,11 @@ export function CalendarScreen({
           今日
         </button>
       </header>
+      {autoUpdateError && (
+        <p role="alert" className="error">
+          {autoUpdateError}
+        </p>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}

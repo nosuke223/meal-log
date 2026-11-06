@@ -335,6 +335,35 @@ describe('日が過ぎた予定', () => {
     })
   })
 
+  test('書き込みだけに失敗したときは、エラーを表示し、次に成功したら消す', async () => {
+    seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError')
+    })
+    render(<App today={TODAY} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('日が過ぎた予定を「食べた」にできませんでした')
+    expect(storedRecords()[0].status).toBe('planned')
+
+    setItem.mockRestore()
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await vi.waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+    expect(storedRecords()[0].status).toBe('eaten')
+  })
+
+  test('カレンダーの画面でも、書き込みに失敗したときはエラーを表示する', async () => {
+    seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('quota', 'QuotaExceededError')
+    })
+    window.history.replaceState(null, '', '/#/calendar/2026-11')
+    render(<App today={TODAY} />)
+    expect(await screen.findByRole('alert')).toHaveTextContent('日が過ぎた予定を「食べた」にできませんでした')
+  })
+
   test('今日を指定しないとき、日付をまたぐと、前の日の「予定」が「食べた」になる', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))

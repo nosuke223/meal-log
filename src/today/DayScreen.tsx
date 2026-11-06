@@ -19,6 +19,8 @@ type Props = {
   today: string
   /** 保存データが画面の外で変わる（日が過ぎた予定の自動更新など）たびに変わる値。変わると読み直す */
   revision?: number
+  /** 日が過ぎた予定の自動更新に失敗したときのエラー。あれば表示する */
+  autoUpdateError?: string | null
   onOpenCalendar: () => void
 }
 
@@ -35,7 +37,7 @@ function messageOf(error: unknown): string {
 }
 
 /** 1日分の記録の画面。追加・変更・削除ができる */
-export function DayScreen({ repository, date, today, revision, onOpenCalendar }: Props) {
+export function DayScreen({ repository, date, today, revision, autoUpdateError, onOpenCalendar }: Props) {
   const [records, setRecords] = useState<MealRecord[]>([])
   const [error, setError] = useState<string | null>(null)
 
@@ -98,6 +100,11 @@ export function DayScreen({ repository, date, today, revision, onOpenCalendar }:
           カレンダー
         </button>
       </header>
+      {autoUpdateError && (
+        <p role="alert" className="error">
+          {autoUpdateError}
+        </p>
+      )}
       {error && (
         <p role="alert" className="error">
           {error}
