@@ -17,7 +17,9 @@ type Props = {
   today?: string
 }
 
-const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
+const DATE_CHECK_INTERVAL_MS = 30_000
+
+const WEEKDAYS =['日', '月', '火', '水', '木', '金', '土']
 
 function formatDate(date: string): string {
   const [year, month, day] = date.split('-').map(Number)
@@ -30,9 +32,27 @@ function messageOf(error: unknown): string {
 }
 
 export function TodayScreen({ repository, today }: Props) {
-  const [date] = useState(() => today ?? toLocalDateString(new Date()))
+  const [currentDate, setCurrentDate] = useState(() => toLocalDateString(new Date()))
+  const date = today ?? currentDate
   const [records, setRecords] = useState<MealRecord[]>([])
   const [error, setError] = useState<string | null>(null)
+
+  // 日付を指定されていないときは、日付をまたいだり画面に戻ったりしたときに今日を取り直す
+  useEffect(() => {
+    if (today !== undefined) return
+    function refresh() {
+      setCurrentDate(toLocalDateString(new Date()))
+    }
+    refresh()
+    const timer = window.setInterval(refresh, DATE_CHECK_INTERVAL_MS)
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [today])
 
   useEffect(() => {
     let cancelled = false

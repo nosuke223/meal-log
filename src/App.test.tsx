@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import App from './App'
 import { MEAL_STORAGE_KEY } from './meals/localStorageMealRepository'
@@ -17,6 +17,7 @@ async function addItem(sectionName: string, name: string) {
 }
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.restoreAllMocks()
 })
 
@@ -120,6 +121,41 @@ test('削除は確認の後に行い、取り消すと削除されない', async
     expect(within(section('夜')).queryByRole('textbox', { name: '品名' })).not.toBeInTheDocument()
   })
   expect(within(section('夜')).queryByText('カレー')).not.toBeInTheDocument()
+})
+
+test('今日を指定しないとき、日付をまたぐと表示と記録の対象日が翌日に変わる', async () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+  vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
+  render(<App />)
+  expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+  await addItem('朝', 'ごはん')
+
+  act(() => {
+    vi.setSystemTime(new Date(2026, 10, 7, 0, 0, 10))
+    vi.advanceTimersByTime(30_000)
+  })
+  expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
+  await vi.waitFor(() => {
+    expect(within(section('朝')).queryByRole('button', { name: /ごはん/ })).not.toBeInTheDocument()
+  })
+
+  await addItem('朝', 'パン')
+  const stored = JSON.parse(window.localStorage.getItem(MEAL_STORAGE_KEY) ?? '{}') as {
+    records: { name: string; date: string }[]
+  }
+  expect(stored.records.map((record) => [record.name, record.date])).toEqual([
+    ['ごはん', '2026-11-06'],
+    ['パン', '2026-11-07'],
+  ])
+})
+
+test('保存先へのアクセスが拒否される環境でも、画面を表示し、エラーを表示する', async () => {
+  vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+    throw new DOMException('denied', 'SecurityError')
+  })
+  render(<App today={TODAY} />)
+  expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+  expect(await screen.findByRole('alert')).toHaveTextContent('記録を読み込めませんでした')
 })
 
 test('保存データが壊れているとき、エラーを表示し、データを上書きしない', async () => {
