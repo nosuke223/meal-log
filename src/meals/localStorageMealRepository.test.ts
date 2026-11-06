@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   createLocalStorageMealRepository,
   MEAL_STORAGE_KEY,
@@ -30,6 +30,10 @@ const base: MealInput = {
 
 beforeEach(() => {
   localStorage.clear()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 describe('作成・取得・更新・削除', () => {
@@ -285,6 +289,78 @@ describe('壊れた保存データ', () => {
     const repository = createRepository()
 
     expect(await repository.get('a')).toEqual(validRecord)
+  })
+})
+
+describe('保存先の失敗', () => {
+  /** localStorage の上に、getItem・setItem だけを差し替えた保存先を作る */
+  function createStorage(overrides: Partial<Pick<Storage, 'getItem' | 'setItem'>>): Storage {
+    return {
+      getItem: overrides.getItem ?? ((key: string) => localStorage.getItem(key)),
+      setItem: overrides.setItem ?? ((key: string, value: string) => localStorage.setItem(key, value)),
+    } as unknown as Storage
+  }
+
+  it('書き込みが容量の上限を超えると、作成・更新・削除が MealStorageError になり、保存データは変わらない', async () => {
+    const created = await createRepository().create(base)
+    const before = localStorage.getItem(MEAL_STORAGE_KEY)
+    const quotaError = new DOMException('quota', 'QuotaExceededError')
+    const repository = createLocalStorageMealRepository({
+      storage: createStorage({
+        setItem: () => {
+          throw quotaError
+        },
+      }),
+    })
+
+    const operations = [
+      () => repository.create(base),
+      () => repository.update(created.id, { name: 'パン' }),
+      () => repository.delete(created.id),
+    ]
+    for (const operation of operations) {
+      const error = await operation().catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(MealStorageError)
+      expect((error as MealStorageError).cause).toBe(quotaError)
+    }
+    expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe(before)
+  })
+
+  it('読み取りが拒否されると、取得・作成・更新・削除が MealStorageError になる', async () => {
+    const securityError = new DOMException('denied', 'SecurityError')
+    const repository = createLocalStorageMealRepository({
+      storage: createStorage({
+        getItem: () => {
+          throw securityError
+        },
+      }),
+    })
+
+    const operations = [
+      () => repository.listByDate(base.date),
+      () => repository.listByDateRange(base.date, base.date),
+      () => repository.get('a'),
+      () => repository.create(base),
+      () => repository.update('a', { name: 'パン' }),
+      () => repository.delete('a'),
+    ]
+    for (const operation of operations) {
+      const error = await operation().catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(MealStorageError)
+      expect((error as MealStorageError).cause).toBe(securityError)
+    }
+  })
+
+  it('window.localStorage の取得が拒否されると、MealStorageError になる', async () => {
+    const securityError = new DOMException('denied', 'SecurityError')
+    vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
+      throw securityError
+    })
+    const repository = createLocalStorageMealRepository()
+
+    const error = await repository.listByDate(base.date).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(MealStorageError)
+    expect((error as MealStorageError).cause).toBe(securityError)
   })
 })
 

@@ -39,14 +39,25 @@ export function createLocalStorageMealRepository(
   const generateId = options.generateId ?? (() => crypto.randomUUID())
 
   function load(): MealRecord[] {
-    const raw = getStorage().getItem(MEAL_STORAGE_KEY)
+    const raw = withStorage('読み込めません', (storage) => storage.getItem(MEAL_STORAGE_KEY))
     if (raw === null) return []
     return parseStoredData(raw).records
   }
 
   function save(records: MealRecord[]): void {
     const data: StoredData = { version: MEAL_STORAGE_VERSION, records }
-    getStorage().setItem(MEAL_STORAGE_KEY, JSON.stringify(data))
+    const json = JSON.stringify(data)
+    withStorage('書き込めません', (storage) => storage.setItem(MEAL_STORAGE_KEY, json))
+  }
+
+  /** 保存先の操作が投げたエラー（容量の上限、アクセスの拒否など）を MealStorageError に包む */
+  function withStorage<T>(failure: string, operation: (storage: Storage) => T): T {
+    try {
+      return operation(getStorage())
+    } catch (error) {
+      const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+      throw new MealStorageError(`保存先に${failure}（${reason}）`, { cause: error })
+    }
   }
 
   function sorted(records: MealRecord[]): MealRecord[] {

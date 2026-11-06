@@ -27,9 +27,11 @@ export class MealNotFoundError extends Error {
   }
 }
 
+/** 保存データが壊れている、または保存先が使えない（容量の上限を超えた、アクセスが拒否された）ときのエラー */
 export class MealStorageError extends Error {
-  constructor(message: string) {
-    super(message)
+  /** options.cause に、保存先が投げた元のエラーを入れる */
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
     this.name = 'MealStorageError'
   }
 }
