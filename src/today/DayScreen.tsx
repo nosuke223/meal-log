@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   MEAL_TYPES,
-  toLocalDateString,
   type DishType,
   type Genre,
   type MealChanges,
@@ -13,13 +12,12 @@ import { MealSection } from './MealSection'
 
 type Props = {
   repository: MealRepository
-  /** 表示する日（YYYY-MM-DD）。省略すると端末の現地の今日 */
-  today?: string
+  /** 表示する日（YYYY-MM-DD） */
+  date: string
+  onOpenCalendar: () => void
 }
 
-const DATE_CHECK_INTERVAL_MS = 30_000
-
-const WEEKDAYS =['日', '月', '火', '水', '木', '金', '土']
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
 
 function formatDate(date: string): string {
   const [year, month, day] = date.split('-').map(Number)
@@ -31,28 +29,10 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function TodayScreen({ repository, today }: Props) {
-  const [currentDate, setCurrentDate] = useState(() => toLocalDateString(new Date()))
-  const date = today ?? currentDate
+/** 1日分の記録の画面。追加・変更・削除ができる */
+export function DayScreen({ repository, date, onOpenCalendar }: Props) {
   const [records, setRecords] = useState<MealRecord[]>([])
   const [error, setError] = useState<string | null>(null)
-
-  // 日付を指定されていないときは、日付をまたいだり画面に戻ったりしたときに今日を取り直す
-  useEffect(() => {
-    if (today !== undefined) return
-    function refresh() {
-      setCurrentDate(toLocalDateString(new Date()))
-    }
-    refresh()
-    const timer = window.setInterval(refresh, DATE_CHECK_INTERVAL_MS)
-    document.addEventListener('visibilitychange', refresh)
-    window.addEventListener('focus', refresh)
-    return () => {
-      window.clearInterval(timer)
-      document.removeEventListener('visibilitychange', refresh)
-      window.removeEventListener('focus', refresh)
-    }
-  }, [today])
 
   useEffect(() => {
     let cancelled = false
@@ -98,11 +78,16 @@ export function TodayScreen({ repository, today }: Props) {
 
   return (
     <main className="screen">
-      <header>
-        <h1>meal-log</h1>
-        <p className="date">
-          <time dateTime={date}>{formatDate(date)}</time>
-        </p>
+      <header className="screen-header">
+        <div>
+          <h1>meal-log</h1>
+          <p className="date">
+            <time dateTime={date}>{formatDate(date)}</time>
+          </p>
+        </div>
+        <button type="button" onClick={onOpenCalendar}>
+          カレンダー
+        </button>
       </header>
       {error && (
         <p role="alert" className="error">
