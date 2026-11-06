@@ -135,6 +135,22 @@ export function createLocalStorageMealRepository(
       if (!records.some((record) => record.id === id)) throw new MealNotFoundError(id)
       save(records.filter((record) => record.id !== id))
     },
+
+    async markPlannedAsEatenBefore(date) {
+      assertDate(date)
+      const records = load()
+      const current = now()
+      const updated: MealRecord[] = []
+      const next = records.map((record) => {
+        if (record.status !== 'planned' || record.date >= date) return record
+        const eaten: MealRecord = { ...record, status: 'eaten', updatedAt: nextTimestamp(current, record.updatedAt) }
+        updated.push(eaten)
+        return eaten
+      })
+      // 更新するものがなければ書き込まない
+      if (updated.length > 0) save(next)
+      return sorted(updated)
+    },
   }
 }
 

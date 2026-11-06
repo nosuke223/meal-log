@@ -465,6 +465,53 @@ describe('保存の永続化', () => {
   })
 })
 
+describe('日が過ぎた予定の更新', () => {
+  it('指定した日より前の日の予定だけを食べたにし、更新日時を変え、更新した記録を返す', async () => {
+    const repository = createRepository()
+    const past = await repository.create({ ...base, date: '2026-11-04', status: 'planned' })
+    const yesterday = await repository.create({ ...base, date: '2026-11-05', mealType: 'dinner', status: 'planned' })
+    const eaten = await repository.create({ ...base, date: '2026-11-04', name: 'パン', status: 'eaten' })
+    const today = await repository.create({ ...base, date: '2026-11-06', status: 'planned' })
+    const future = await repository.create({ ...base, date: '2026-11-07', status: 'planned' })
+
+    const updated = await repository.markPlannedAsEatenBefore('2026-11-06')
+
+    expect(updated.map((record) => record.id)).toEqual([past.id, yesterday.id])
+    for (const [before, after] of [
+      [past, updated[0]],
+      [yesterday, updated[1]],
+    ]) {
+      expect(after).toEqual({ ...before, status: 'eaten', updatedAt: after.updatedAt })
+      expect(Date.parse(after.updatedAt)).toBeGreaterThan(Date.parse(before.updatedAt))
+      expect(await repository.get(before.id)).toEqual(after)
+    }
+    expect(await repository.get(eaten.id)).toEqual(eaten)
+    expect(await repository.get(today.id)).toEqual(today)
+    expect(await repository.get(future.id)).toEqual(future)
+  })
+
+  it('更新する予定がなければ空を返し、保存データを書き込まない', async () => {
+    const repository = createRepository()
+    await repository.create({ ...base, date: '2026-11-06', status: 'planned' })
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+
+    expect(await repository.markPlannedAsEatenBefore('2026-11-06')).toEqual([])
+    expect(setItem).not.toHaveBeenCalled()
+  })
+
+  it('不正な日付は MealValidationError', async () => {
+    const repository = createRepository()
+    await expect(repository.markPlannedAsEatenBefore('2026-02-30')).rejects.toThrow(MealValidationError)
+  })
+
+  it('保存データが壊れているときは MealStorageError で、上書きしない', async () => {
+    localStorage.setItem(MEAL_STORAGE_KEY, '{broken')
+    const repository = createRepository()
+    await expect(repository.markPlannedAsEatenBefore('2026-11-06')).rejects.toThrow(MealStorageError)
+    expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe('{broken')
+  })
+})
+
 describe('toLocalDateString', () => {
   it('端末の現地の日付を YYYY-MM-DD にする', () => {
     expect(toLocalDateString(new Date(2026, 0, 5, 23, 59))).toBe('2026-01-05')

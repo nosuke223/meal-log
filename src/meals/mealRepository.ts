@@ -18,6 +18,11 @@ export interface MealRepository {
   update(id: string, changes: MealChanges): Promise<MealRecord>
   /** 削除する */
   delete(id: string): Promise<void>
+  /**
+   * date（YYYY-MM-DD）より前の日の「予定」を、すべて「食べた」に更新する（日が過ぎた予定の自動更新用）。
+   * 更新した記録の updatedAt は変わる。更新した記録を返す（なければ空）
+   */
+  markPlannedAsEatenBefore(date: string): Promise<MealRecord[]>
 }
 
 export class MealNotFoundError extends Error {
