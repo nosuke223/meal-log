@@ -32,19 +32,21 @@ export type LocalStorageMealRepositoryOptions = {
 export function createLocalStorageMealRepository(
   options: LocalStorageMealRepositoryOptions = {},
 ): MealRepository {
-  const storage = options.storage ?? window.localStorage
+  // window.localStorage は、アクセスが拒否された環境では取得時に例外になる。
+  // 窓口を作る時点では触らず、操作の中で取得して、呼び出し側のエラー処理で受けられるようにする
+  const getStorage = () => options.storage ?? window.localStorage
   const now = options.now ?? (() => new Date())
   const generateId = options.generateId ?? (() => crypto.randomUUID())
 
   function load(): MealRecord[] {
-    const raw = storage.getItem(MEAL_STORAGE_KEY)
+    const raw = getStorage().getItem(MEAL_STORAGE_KEY)
     if (raw === null) return []
     return parseStoredData(raw).records
   }
 
   function save(records: MealRecord[]): void {
     const data: StoredData = { version: MEAL_STORAGE_VERSION, records }
-    storage.setItem(MEAL_STORAGE_KEY, JSON.stringify(data))
+    getStorage().setItem(MEAL_STORAGE_KEY, JSON.stringify(data))
   }
 
   function sorted(records: MealRecord[]): MealRecord[] {
