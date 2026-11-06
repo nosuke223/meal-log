@@ -1,7 +1,11 @@
 import { expect, test } from 'vitest'
-import { parseHash } from './route'
+import { parseHash, todayHash } from './route'
 
 const TODAY = '2026-11-06'
+
+test('todayHash は今日の記録の画面になる', () => {
+  expect(parseHash(todayHash(), TODAY)).toEqual({ screen: 'day', date: null })
+})
 
 test('ハッシュがないときや知らない形のときは、今日の記録の画面にする', () => {
   expect(parseHash('', TODAY)).toEqual({ screen: 'day', date: null })

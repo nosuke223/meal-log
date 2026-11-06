@@ -25,6 +25,11 @@ export function parseHash(hash: string, today: string): Route {
   return { screen: 'day', date: null }
 }
 
+/** 今日の記録の画面。日付をまたぐと翌日の画面に変わる */
+export function todayHash(): string {
+  return '#/'
+}
+
 export function dayHash(date: string): string {
   return `#/day/${date}`
 }
