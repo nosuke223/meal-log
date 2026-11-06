@@ -1,0 +1,160 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #222;
+  background: #fafafa;
+}
+
+.screen {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.date {
+  margin: 0 0 12px;
+}
+
+.section {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+.items {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  margin-bottom: 6px;
+}
+
+button,
+select,
+.text-input {
+  min-height: 44px;
+  font: inherit;
+}
+
+button {
+  padding: 0 14px;
+  background: #fff;
+  border: 1px solid #888;
+  border-radius: 8px;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
+
+button.primary {
+  color: #fff;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+button.danger {
+  color: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.item-button {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+}
+
+.item-name {
+  overflow-wrap: anywhere;
+}
+
+.tag {
+  padding: 0 8px;
+  font-size: 0.85rem;
+  background: #eee;
+  border-radius: 999px;
+}
+
+.text-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid #888;
+  border-radius: 8px;
+}
+
+.add-form,
+.edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.add-row {
+  display: flex;
+  gap: 8px;
+}
+
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.choices-legend {
+  min-width: 5.5em;
+  font-size: 0.85rem;
+  color: #555;
+}
+
+.choice[aria-pressed='true'] {
+  color: #fff;
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+.select-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.error {
+  padding: 8px 12px;
+  color: #b91c1c;
+  background: #fee2e2;
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
