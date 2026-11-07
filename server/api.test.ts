@@ -68,33 +68,37 @@ function createClient(handlerOptions: Parameters<typeof createApiHandler>[0] = {
  */
 function interruptedDb(prefix: string, interrupt: () => Promise<unknown>, times = 1): D1Database {
   let count = 0
-  async function after(query: string) {
-    if (count >= times || !query.trimStart().startsWith(prefix)) return
+  async function after() {
+    if (count >= times) return
     count++
     await interrupt()
   }
-  function wrap(statement: D1PreparedStatement, query: string): D1PreparedStatement {
+  function wrap(statement: D1PreparedStatement): D1PreparedStatement {
     return {
-      bind: (...values) => wrap(statement.bind(...values), query),
+      bind: (...values) => wrap(statement.bind(...values)),
       first: async <T>() => {
         const result = await statement.first<T>()
-        await after(query)
+        await after()
         return result
       },
       all: async <T>() => {
         const result = await statement.all<T>()
-        await after(query)
+        await after()
         return result
       },
       run: async <T>() => {
         const result = await statement.run<T>()
-        await after(query)
+        await after()
         return result
       },
     }
   }
   return {
-    prepare: (query) => wrap(database.db.prepare(query), query),
+    // prefix で始まらない文は包まない（batch には D1 の文のまま渡す必要があるため）
+    prepare: (query) => {
+      const statement = database.db.prepare(query)
+      return query.trimStart().startsWith(prefix) ? wrap(statement) : statement
+    },
     batch: (statements) => database.db.batch(statements),
   }
 }
@@ -487,6 +491,26 @@ describe('日が過ぎた予定の更新', () => {
     for (const unchanged of [eaten, today, future]) {
       expect((await call('GET', `/api/meals/${unchanged.id}`)).body.meal).toEqual(unchanged)
     }
+  })
+
+  it('予定を読んでから書くまでの間に、日付が基準の日以降に変わった記録は食べたにしない', async () => {
+    const call = createClient()
+    const moved = (await call('POST', '/api/meals', { body: { ...base, date: '2026-11-05', status: 'planned' } })).body
+      .meal as MealRecord
+    const kept = (
+      await call('POST', '/api/meals', { body: { ...base, date: '2026-11-04', mealType: 'dinner', status: 'planned' } })
+    ).body.meal as MealRecord
+    // 予定を読んだ直後に、1件の日付を基準の日より後へ移す
+    const db = interruptedDb('SELECT id,', () => call('PATCH', `/api/meals/${moved.id}`, { body: { date: '2026-11-07' } }))
+
+    const response = await call('POST', '/api/mark-planned-as-eaten', { db, body: { date: '2026-11-06' } })
+    expect(response.status).toBe(200)
+    expect(response.body.meals.map((record: MealRecord) => record.id)).toEqual([kept.id])
+    expect((await call('GET', `/api/meals/${moved.id}`)).body.meal).toMatchObject({
+      date: '2026-11-07',
+      status: 'planned',
+    })
+    expect((await call('GET', `/api/meals/${kept.id}`)).body.meal.status).toBe('eaten')
   })
 
   it('更新する予定がなければ空を返す', async () => {

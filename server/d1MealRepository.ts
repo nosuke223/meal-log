@@ -182,6 +182,8 @@ export function createD1MealRepository(
         id: record.id,
         updatedAt: nextTimestamp(current, record.updatedAt),
       }))
+      // 読んでから書くまでの間に、他の更新や取り込みで状態や日付が変わっていたら書かない
+      // （書くときにも、まだ予定で、基準の日より前の日かを確かめる）
       const statements = chunk(changes, RECORDS_PER_STATEMENT).map((part) =>
         db
           .prepare(
@@ -190,10 +192,10 @@ export function createD1MealRepository(
                SELECT json_extract(value, '$.id') AS new_id, json_extract(value, '$.updatedAt') AS new_updated_at
                FROM json_each(?2)
              ) AS u
-             WHERE meals.user_email = ?1 AND meals.id = u.new_id AND meals.status = 'planned'
+             WHERE meals.user_email = ?1 AND meals.id = u.new_id AND meals.status = 'planned' AND meals.date < ?3
              RETURNING ${COLUMNS}`,
           )
-          .bind(email, JSON.stringify(part)),
+          .bind(email, JSON.stringify(part), date),
       )
       const results = await withStorage('書き込めません', () => db.batch<MealRow>(statements))
       return results.flatMap((result) => result.results.map(toRecord)).sort(compareMealRecords)
