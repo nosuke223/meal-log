@@ -513,6 +513,48 @@ describe('日が過ぎた予定の更新', () => {
     expect((await call('GET', `/api/meals/${kept.id}`)).body.meal.status).toBe('eaten')
   })
 
+  it('予定を読んでから書くまでの間に別の更新が割り込んでも、更新日時は割り込んだ更新より後になる', async () => {
+    // 時計が進まなくても、更新日時は保存されているものより後になる
+    const fixed = new Date('2026-11-06T00:00:00.000Z')
+    const call = createClient({ now: () => fixed })
+    const created = (await call('POST', '/api/meals', { body: { ...base, date: '2026-11-05', status: 'planned' } })).body
+      .meal as MealRecord
+    let patched: MealRecord | undefined
+    // 予定を読んだ直後に、予定のまま品名を変える
+    const db = interruptedDb('SELECT id,', async () => {
+      patched = (await call('PATCH', `/api/meals/${created.id}`, { body: { name: 'パン' } })).body.meal
+    })
+
+    const response = await call('POST', '/api/mark-planned-as-eaten', { db, body: { date: '2026-11-06' } })
+    expect(response.status).toBe(200)
+    const [marked]: MealRecord[] = response.body.meals
+    expect(response.body.meals).toHaveLength(1)
+    expect(marked).toMatchObject({ id: created.id, name: 'パン', status: 'eaten' })
+    expect(Date.parse(marked.updatedAt)).toBeGreaterThan(Date.parse(patched!.updatedAt))
+    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toEqual(marked)
+  })
+
+  it('予定の更新で割り込みが続いて書き込めなければ 500（MealStorageError）で、割り込んだ変更は残る', async () => {
+    const call = createClient()
+    const created = (await call('POST', '/api/meals', { body: { ...base, date: '2026-11-05', status: 'planned' } })).body
+      .meal as MealRecord
+    let count = 0
+    const db = interruptedDb(
+      'SELECT id,',
+      () => call('PATCH', `/api/meals/${created.id}`, { body: { name: `割り込み${++count}` } }),
+      Infinity,
+    )
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const response = await call('POST', '/api/mark-planned-as-eaten', { db, body: { date: '2026-11-06' } })
+    expect(response.status).toBe(500)
+    expect(response.body.error.type).toBe('MealStorageError')
+    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toMatchObject({
+      name: `割り込み${count}`,
+      status: 'planned',
+    })
+  })
+
   it('更新する予定がなければ空を返す', async () => {
     const call = createClient()
     await call('POST', '/api/meals', { body: { ...base, date: '2026-11-06', status: 'planned' } })

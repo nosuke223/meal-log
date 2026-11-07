@@ -174,31 +174,43 @@ export function createD1MealRepository(
 
     async markPlannedAsEatenBefore(date) {
       assertDate(date)
-      const planned = await selectRecords("status = 'planned' AND date < ?", date)
-      // 更新するものがなければ書き込まない
-      if (planned.length === 0) return []
-      const current = now()
-      const changes = planned.map((record) => ({
-        id: record.id,
-        updatedAt: nextTimestamp(current, record.updatedAt),
-      }))
-      // 読んでから書くまでの間に、他の更新や取り込みで状態や日付が変わっていたら書かない
-      // （書くときにも、まだ予定で、基準の日より前の日かを確かめる）
-      const statements = chunk(changes, RECORDS_PER_STATEMENT).map((part) =>
-        db
-          .prepare(
-            `UPDATE meals SET status = 'eaten', updated_at = u.new_updated_at
-             FROM (
-               SELECT json_extract(value, '$.id') AS new_id, json_extract(value, '$.updatedAt') AS new_updated_at
-               FROM json_each(?2)
-             ) AS u
-             WHERE meals.user_email = ?1 AND meals.id = u.new_id AND meals.status = 'planned' AND meals.date < ?3
-             RETURNING ${COLUMNS}`,
-          )
-          .bind(email, JSON.stringify(part), date),
-      )
-      const results = await withStorage('書き込めません', () => db.batch<MealRow>(statements))
-      return results.flatMap((result) => result.results.map(toRecord)).sort(compareMealRecords)
+      const marked = new Map<string, MealRecord>()
+      for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+        const planned = await selectRecords("status = 'planned' AND date < ?", date)
+        // 更新するものがなければ書き込まない
+        if (planned.length === 0) return [...marked.values()].sort(compareMealRecords)
+        const current = now()
+        const changes = planned.map((record) => ({
+          id: record.id,
+          updatedAt: record.updatedAt,
+          newUpdatedAt: nextTimestamp(current, record.updatedAt),
+        }))
+        // 読んでから書くまでの間に、他の更新や取り込みで状態や日付や更新日時が変わっていたら、その記録は書かない
+        // （書くときにも、まだ予定で、基準の日より前の日で、更新日時が読んだときのままかを確かめる）。
+        // 更新日時が変わっていた記録は、読み直して、保存されている更新日時より後の日時を付け直す
+        const statements = chunk(changes, RECORDS_PER_STATEMENT).map((part) =>
+          db
+            .prepare(
+              `UPDATE meals SET status = 'eaten', updated_at = u.new_updated_at
+               FROM (
+                 SELECT json_extract(value, '$.id') AS new_id,
+                   json_extract(value, '$.updatedAt') AS old_updated_at,
+                   json_extract(value, '$.newUpdatedAt') AS new_updated_at
+                 FROM json_each(?2)
+               ) AS u
+               WHERE meals.user_email = ?1 AND meals.id = u.new_id AND meals.status = 'planned' AND meals.date < ?3
+                 AND meals.updated_at = u.old_updated_at
+               RETURNING ${COLUMNS}`,
+            )
+            .bind(email, JSON.stringify(part), date),
+        )
+        const results = await withStorage('書き込めません', () => db.batch<MealRow>(statements))
+        const written = results.flatMap((result) => result.results.map(toRecord))
+        for (const record of written) marked.set(record.id, record)
+        if (written.length === planned.length) return [...marked.values()].sort(compareMealRecords)
+        // 割り込まれた記録がある（まだ予定のまま残っていれば、読み直して書き直す）
+      }
+      throw conflictError()
     },
 
     async listAll() {
