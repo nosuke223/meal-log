@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { GENRE_LABELS } from '../meals/labels'
+import type { MealRecord } from '../meals/mealRecord'
 import type { MealRepository } from '../meals/mealRepository'
 import {
   buildMonthWeeks,
@@ -11,6 +12,7 @@ import {
   shiftMonth,
   type GenreMark,
 } from './calendarMonth'
+import { DayPreview } from './DayPreview'
 
 type Props = {
   repository: MealRepository
@@ -18,12 +20,17 @@ type Props = {
   today: string
   /** 表示する月（YYYY-MM） */
   month: string
+  /** 選んだ日（YYYY-MM-DD、表示する月の日）。null は何も選んでいない */
+  selected: string | null
   /** 保存データが画面の外で変わる（日が過ぎた予定の自動更新など）たびに変わる値。変わると読み直す */
   revision?: number
   /** 日が過ぎた予定の自動更新に失敗したときのエラー。あれば表示する */
   autoUpdateError?: string | null
   onChangeMonth: (month: string) => void
+  /** 日を選ぶ（選んでいない日のマスをタップしたとき） */
   onSelectDate: (date: string) => void
+  /** その日の記録の画面を開く（一覧のボタンか、選んでいる日のマスをもう一度タップしたとき） */
+  onOpenDate: (date: string) => void
   onOpenToday: () => void
 }
 
@@ -78,17 +85,24 @@ type MonthMarks = {
   month: string
   genres: Map<string, GenreMark[]>
   planned: Set<string>
+  /** 月の記録。読み込めなかったときは null */
+  records: MealRecord[] | null
 }
 
-/** 月表示のカレンダー。記録がある日に出てきたジャンルの点を、予定がある日に予定の印を表示する */
+/**
+ * 月表示のカレンダー。記録がある日に出てきたジャンルの点を、予定がある日に予定の印を表示する。
+ * 選んだ日の品は、カレンダーの下に一覧で表示する
+ */
 export function CalendarScreen({
   repository,
   today,
   month,
+  selected,
   revision,
   autoUpdateError,
   onChangeMonth,
   onSelectDate,
+  onOpenDate,
   onOpenToday,
 }: Props) {
   const [loaded, setLoaded] = useState<MonthMarks | null>(null)
@@ -101,12 +115,12 @@ export function CalendarScreen({
       .listByDateRange(from, to)
       .then((records) => {
         if (cancelled) return
-        setLoaded({ month, genres: genreMarksByDate(records), planned: plannedDates(records) })
+        setLoaded({ month, genres: genreMarksByDate(records), planned: plannedDates(records), records })
         setError(null)
       })
       .catch((cause: unknown) => {
         if (cancelled) return
-        setLoaded({ month, genres: new Map(), planned: new Set() })
+        setLoaded({ month, genres: new Map(), planned: new Set(), records: null })
         setError(`記録を読み込めませんでした: ${messageOf(cause)}`)
       })
     return () => {
@@ -123,9 +137,15 @@ export function CalendarScreen({
     <main className="screen">
       <header className="screen-header">
         <h1>meal-log</h1>
-        <button type="button" onClick={onOpenToday}>
-          今日
-        </button>
+        <div className="header-actions">
+          {/* 一覧が画面に収まるよう、月の行の下に分けず、ここに置く */}
+          <button type="button" onClick={() => onChangeMonth(monthOf(today))}>
+            今月
+          </button>
+          <button type="button" onClick={onOpenToday}>
+            今日
+          </button>
+        </div>
       </header>
       {autoUpdateError && (
         <p role="alert" className="error">
@@ -146,11 +166,6 @@ export function CalendarScreen({
           次の月
         </button>
       </div>
-      <div className="month-nav-sub">
-        <button type="button" onClick={() => onChangeMonth(monthOf(today))}>
-          今月
-        </button>
-      </div>
       <table className="calendar" aria-label={formatMonth(month)} aria-busy={current === null}>
         <thead>
           <tr>
@@ -169,6 +184,7 @@ export function CalendarScreen({
                 const marks = current?.genres.get(date)
                 const planned = current?.planned.has(date) ?? false
                 const isToday = date === today
+                const isSelected = date === selected
                 return (
                   <td key={date}>
                     <button
@@ -176,7 +192,8 @@ export function CalendarScreen({
                       className="day"
                       aria-label={dayLabel(date, marks, planned)}
                       aria-current={isToday ? 'date' : undefined}
-                      onClick={() => onSelectDate(date)}
+                      aria-pressed={isSelected}
+                      onClick={() => (isSelected ? onOpenDate(date) : onSelectDate(date))}
                     >
                       <span className="day-head">
                         <span className="day-number">{Number(date.slice(8))}</span>
@@ -197,6 +214,7 @@ export function CalendarScreen({
           ))}
         </tbody>
       </table>
+      <DayPreview date={selected} records={current?.records ?? null} onOpen={onOpenDate} />
       <section className="legend" aria-label="点の凡例">
         <ul className="legend-list">
           {GENRE_MARKS.map((mark) => (

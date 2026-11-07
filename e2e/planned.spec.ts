@@ -89,6 +89,8 @@ test('カレンダーで明日以降の日を選び、予定を追加・変更�
   await openWith(page, [], '#/calendar/2026-11')
   await page.getByRole('button', { name: '次の月' }).click()
   await day(page, '12月24日').click()
+  await expect(page.getByRole('region', { name: '選んだ日の品' })).toContainText('記録はありません')
+  await page.getByRole('button', { name: 'この日の記録を開く' }).click()
   await expect(page).toHaveURL(/#\/day\/2026-12-24$/)
   await expect(page.getByText('2026年12月24日（木）')).toBeVisible()
 
@@ -117,11 +119,13 @@ test('カレンダーで明日以降の日を選び、予定を追加・変更�
 
   // カレンダーには、ジャンルの点ではなく予定の印が付く
   await page.goBack()
-  await expect(page.getByRole('heading', { name: '2026年12月' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '2026年12月', exact: true })).toBeVisible()
   const marked = day(page, '12月24日 予定あり')
   await expect(marked).toBeVisible()
   await expect(marked).toHaveText('24')
   await expect(marked.locator('.planned-mark')).toBeVisible()
+  // 一覧には予定の品も出る
+  await expect(page.getByRole('region', { name: '選んだ日の品' }).getByRole('listitem')).toHaveText(['○予定ローストチキン洋'])
   await expectNoHorizontalScroll(page)
 })
 

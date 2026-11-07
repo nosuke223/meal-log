@@ -27,3 +27,12 @@ export const MEAL_STATUS_LABELS: Record<MealStatus, string> = {
   planned: '予定',
   eaten: '食べた',
 }
+
+const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
+
+/** 日付（YYYY-MM-DD）を「2026年11月3日（火）」の形にする */
+export function formatDate(date: string): string {
+  const [year, month, day] = date.split('-').map(Number)
+  const weekday = WEEKDAYS[new Date(year, month - 1, day).getDay()]
+  return `${year}年${month}月${day}日（${weekday}）`
+}

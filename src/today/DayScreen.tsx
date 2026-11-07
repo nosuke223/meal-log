@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { formatDate } from '../meals/labels'
 import {
   MEAL_TYPES,
   type DishType,
@@ -23,14 +24,6 @@ type Props = {
   autoUpdateError?: string | null
   onOpenCalendar: () => void
   onOpenData: () => void
-}
-
-const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土']
-
-function formatDate(date: string): string {
-  const [year, month, day] = date.split('-').map(Number)
-  const weekday = WEEKDAYS[new Date(year, month - 1, day).getDay()]
-  return `${year}年${month}月${day}日（${weekday}）`
 }
 
 function messageOf(error: unknown): string {
