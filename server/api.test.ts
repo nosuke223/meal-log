@@ -63,14 +63,14 @@ function createClient(handlerOptions: Parameters<typeof createApiHandler>[0] = {
 }
 
 /**
- * prefix で始まる文を最初に実行した直後に、interrupt を1回だけ実行する D1。
+ * prefix で始まる文を実行した直後に、interrupt を実行する D1（最初の times 回だけ）。
  * 読んでから書くまでの間に、別のリクエストの書き込みが割り込んだ状態を作る
  */
-function interruptedDb(prefix: string, interrupt: () => Promise<unknown>): D1Database {
-  let interrupted = false
+function interruptedDb(prefix: string, interrupt: () => Promise<unknown>, times = 1): D1Database {
+  let count = 0
   async function after(query: string) {
-    if (interrupted || !query.trimStart().startsWith(prefix)) return
-    interrupted = true
+    if (count >= times || !query.trimStart().startsWith(prefix)) return
+    count++
     await interrupt()
   }
   function wrap(statement: D1PreparedStatement, query: string): D1PreparedStatement {
@@ -189,6 +189,46 @@ describe('作成・取得・更新・削除', () => {
 
     expect(updated.updatedAt > created.updatedAt).toBe(true)
     expect(updated.createdAt).toBe(created.createdAt)
+  })
+
+  it('読んでから書くまでの間に別の更新が割り込んでも、割り込んだ変更を元に戻さない', async () => {
+    const call = createClient()
+    const created = (await call('POST', '/api/meals', { body: { ...base, status: 'planned' } })).body.meal
+    // 品名の更新が記録を読んだ直後に、状態の更新を終わらせる
+    const db = interruptedDb('SELECT id,', () => call('PATCH', `/api/meals/${created.id}`, { body: { status: 'eaten' } }))
+
+    const updated = await call('PATCH', `/api/meals/${created.id}`, { db, body: { name: 'パン' } })
+    expect(updated.status).toBe(200)
+    expect(updated.body.meal).toMatchObject({ name: 'パン', status: 'eaten' })
+    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toEqual(updated.body.meal)
+  })
+
+  it('読んでから書くまでの間に削除されたら、更新は 404 で、記録は戻らない', async () => {
+    const call = createClient()
+    const created = (await call('POST', '/api/meals', { body: base })).body.meal
+    const db = interruptedDb('SELECT id,', () => call('DELETE', `/api/meals/${created.id}`))
+
+    const updated = await call('PATCH', `/api/meals/${created.id}`, { db, body: { name: 'パン' } })
+    expect(updated.status).toBe(404)
+    expect(updated.body.error.type).toBe('MealNotFoundError')
+    expect((await call('GET', '/api/meals')).body.meals).toEqual([])
+  })
+
+  it('割り込みが続いて書き込めなければ 500（MealStorageError）で、割り込んだ変更は残る', async () => {
+    const call = createClient()
+    const created = (await call('POST', '/api/meals', { body: base })).body.meal
+    let count = 0
+    const db = interruptedDb(
+      'SELECT id,',
+      () => call('PATCH', `/api/meals/${created.id}`, { body: { name: `割り込み${++count}` } }),
+      Infinity,
+    )
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const updated = await call('PATCH', `/api/meals/${created.id}`, { db, body: { status: 'planned' } })
+    expect(updated.status).toBe(500)
+    expect(updated.body.error.type).toBe('MealStorageError')
+    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toMatchObject({ name: `割り込み${count}`, status: 'eaten' })
   })
 
   it('削除すると 204 で、取得できなくなる', async () => {

@@ -126,35 +126,43 @@ export function createD1MealRepository(
     },
 
     async update(id, changes) {
-      const current = await selectOne(id)
-      if (current === null) throw new MealNotFoundError(id)
-      const fields = normalizeFields({ ...pickFields(current), ...definedChanges(changes) })
-      const updated: MealRecord = {
-        ...current,
-        ...fields,
-        updatedAt: nextTimestamp(now(), current.updatedAt),
+      const defined = definedChanges(changes)
+      for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+        const current = await selectOne(id)
+        if (current === null) throw new MealNotFoundError(id)
+        const fields = normalizeFields({ ...pickFields(current), ...defined })
+        const updated: MealRecord = {
+          ...current,
+          ...fields,
+          updatedAt: nextTimestamp(now(), current.updatedAt),
+        }
+        // 読んだときから行が変わっていないときだけ書く。読んでから書くまでの間に、他の更新や取り込みが
+        // 割り込んでいたら、読み直して渡された項目だけを当て直す（割り込んだ変更を元に戻さないため）。
+        // 取り込みは更新日時を変えずに置き換えることがあるので、更新日時だけでなく、すべての列を比べる
+        const result = await withStorage('書き込めません', () =>
+          db
+            .prepare(
+              `UPDATE meals SET date = ?, meal_type = ?, name = ?, genre = ?, dish_type = ?, status = ?, updated_at = ?
+               WHERE user_email = ? AND id = ? AND date = ? AND meal_type = ? AND name = ? AND genre IS ?
+                 AND dish_type IS ? AND status = ? AND created_at = ? AND updated_at = ?`,
+            )
+            .bind(
+              updated.date,
+              updated.mealType,
+              updated.name,
+              updated.genre,
+              updated.dishType,
+              updated.status,
+              updated.updatedAt,
+              email,
+              ...toValues(current),
+            )
+            .run(),
+        )
+        if (result.meta.changes > 0) return updated
+        // 割り込まれた（削除されていれば、読み直したときに MealNotFoundError）
       }
-      const result = await withStorage('書き込めません', () =>
-        db
-          .prepare(
-            'UPDATE meals SET date = ?, meal_type = ?, name = ?, genre = ?, dish_type = ?, status = ?, updated_at = ? WHERE user_email = ? AND id = ?',
-          )
-          .bind(
-            updated.date,
-            updated.mealType,
-            updated.name,
-            updated.genre,
-            updated.dishType,
-            updated.status,
-            updated.updatedAt,
-            email,
-            id,
-          )
-          .run(),
-      )
-      // 読んでから書くまでの間に削除されたとき
-      if (result.meta.changes === 0) throw new MealNotFoundError(id)
-      return updated
+      throw conflictError()
     },
 
     async delete(id) {
