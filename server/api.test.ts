@@ -169,8 +169,18 @@ describe('作成・取得・更新・削除', () => {
   it('ID に「/」などを含む記録も、エンコードしたアドレスで扱える', async () => {
     const call = createClient()
     const id = 'a/b c?'
-    await call('POST', '/api/meals/import', { body: { records: [imported({ id })] } })
+    await call('POST', '/api/import', { body: { records: [imported({ id })] } })
     const path = `/api/meals/${encodeURIComponent(id)}`
+
+    expect((await call('GET', path)).body.meal.id).toBe(id)
+    expect((await call('PATCH', path, { body: { name: 'パン' } })).body.meal.name).toBe('パン')
+    expect((await call('DELETE', path)).status).toBe(204)
+  })
+
+  it.each(['import', 'mark-planned-as-eaten'])('ID が操作の名前と同じ記録（%s）も、取得・更新・削除できる', async (id) => {
+    const call = createClient()
+    await call('POST', '/api/import', { body: { records: [imported({ id })] } })
+    const path = `/api/meals/${id}`
 
     expect((await call('GET', path)).body.meal.id).toBe(id)
     expect((await call('PATCH', path, { body: { name: 'パン' } })).body.meal.name).toBe('パン')
@@ -265,10 +275,10 @@ describe('並び順', () => {
 
   it('その人の保存済みの記録のうち、最も遅い作成日時より後の日時で作る（他の人の記録は見ない）', async () => {
     const call = createClient()
-    await call('POST', '/api/meals/import', {
+    await call('POST', '/api/import', {
       body: { records: [imported({ id: 'future', createdAt: '2026-11-06T05:00:00.000Z' })] },
     })
-    await call('POST', '/api/meals/import', {
+    await call('POST', '/api/import', {
       as: BOB,
       body: { records: [imported({ id: 'bob-future', createdAt: '2026-11-06T09:00:00.000Z' })] },
     })
@@ -281,7 +291,7 @@ describe('並び順', () => {
   it('作成日時まで同じ記録は、ID の順に並ぶ', async () => {
     const call = createClient()
     const record = (id: string) => imported({ id, date: base.date, createdAt: '2026-11-06T00:00:00.000Z' })
-    await call('POST', '/api/meals/import', { body: { records: [record('c'), record('a'), record('b')] } })
+    await call('POST', '/api/import', { body: { records: [record('c'), record('a'), record('b')] } })
 
     const first: MealRecord[] = (await call('GET', `/api/meals?date=${base.date}`)).body.meals
     expect(first.map((r) => r.id)).toEqual(['a', 'b', 'c'])
@@ -365,7 +375,7 @@ describe('日が過ぎた予定の更新', () => {
     const today = await create({ date: '2026-11-06', status: 'planned' })
     const future = await create({ date: '2026-11-07', status: 'planned' })
 
-    const response = await call('POST', '/api/meals/mark-planned-as-eaten', { body: { date: '2026-11-06' } })
+    const response = await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-11-06' } })
     expect(response.status).toBe(200)
     const updated: MealRecord[] = response.body.meals
 
@@ -387,7 +397,7 @@ describe('日が過ぎた予定の更新', () => {
     const call = createClient()
     await call('POST', '/api/meals', { body: { ...base, date: '2026-11-06', status: 'planned' } })
 
-    expect((await call('POST', '/api/meals/mark-planned-as-eaten', { body: { date: '2026-11-06' } })).body).toEqual({
+    expect((await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-11-06' } })).body).toEqual({
       meals: [],
     })
   })
@@ -397,10 +407,10 @@ describe('日が過ぎた予定の更新', () => {
     const records = Array.from({ length: 250 }, (_, index) =>
       imported({ id: `p${String(index).padStart(3, '0')}`, status: 'planned' }),
     )
-    await call('POST', '/api/meals/import', { body: { records } })
+    await call('POST', '/api/import', { body: { records } })
 
     const updated: MealRecord[] = (
-      await call('POST', '/api/meals/mark-planned-as-eaten', { body: { date: '2026-11-06' } })
+      await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-11-06' } })
     ).body.meals
     expect(updated).toHaveLength(250)
     const all: MealRecord[] = (await call('GET', '/api/meals')).body.meals
@@ -413,7 +423,7 @@ describe('日が過ぎた予定の更新', () => {
     ['日付が文字列でない', { date: 20261106 }],
   ])('%s なら 400（MealValidationError）', async (_, body) => {
     const call = createClient()
-    const response = await call('POST', '/api/meals/mark-planned-as-eaten', { body })
+    const response = await call('POST', '/api/mark-planned-as-eaten', { body })
 
     expect(response.status).toBe(400)
     expect(response.body.error.type).toBe('MealValidationError')
@@ -435,7 +445,7 @@ describe('全件の取得と一括取り込み', () => {
     const replaced = (await call('POST', '/api/meals', { body: { ...base, name: 'パン' } })).body.meal
 
     const replacement = imported({ id: replaced.id, name: 'おにぎり', genre: null, dishType: null })
-    const response = await call('POST', '/api/meals/import', { body: { records: [imported(), replacement] } })
+    const response = await call('POST', '/api/import', { body: { records: [imported(), replacement] } })
 
     expect(response.status).toBe(204)
     expect((await call('GET', '/api/meals/imported')).body.meal).toEqual(imported())
@@ -446,7 +456,7 @@ describe('全件の取得と一括取り込み', () => {
 
   it('品名の前後の空白は取り除いて保存する', async () => {
     const call = createClient()
-    await call('POST', '/api/meals/import', { body: { records: [imported({ name: ' カレー  ' })] } })
+    await call('POST', '/api/import', { body: { records: [imported({ name: ' カレー  ' })] } })
 
     expect((await call('GET', '/api/meals/imported')).body.meal.name).toBe('カレー')
   })
@@ -455,7 +465,7 @@ describe('全件の取得と一括取り込み', () => {
     const call = createClient()
     const kept = (await call('POST', '/api/meals', { body: base })).body.meal
 
-    expect((await call('POST', '/api/meals/import', { body: { records: [] } })).status).toBe(204)
+    expect((await call('POST', '/api/import', { body: { records: [] } })).status).toBe(204)
     expect((await call('GET', '/api/meals')).body.meals).toEqual([kept])
   })
 
@@ -465,7 +475,7 @@ describe('全件の取得と一括取り込み', () => {
       imported({ id: `r${String(index).padStart(3, '0')}`, name: `品${index}` }),
     )
 
-    expect((await call('POST', '/api/meals/import', { body: { records } })).status).toBe(204)
+    expect((await call('POST', '/api/import', { body: { records } })).status).toBe(204)
     const all: MealRecord[] = (await call('GET', '/api/meals')).body.meals
     expect(all).toEqual([...records].sort((a, b) => (a.id < b.id ? -1 : 1)))
   })
@@ -474,7 +484,7 @@ describe('全件の取得と一括取り込み', () => {
     const call = createClient()
     const kept = (await call('POST', '/api/meals', { body: base })).body.meal
 
-    const invalid = await call('POST', '/api/meals/import', {
+    const invalid = await call('POST', '/api/import', {
       body: { records: [imported({ id: 'ok' }), imported({ id: 'bad', name: ' ' })] },
     })
     expect(invalid.status).toBe(400)
@@ -482,11 +492,11 @@ describe('全件の取得と一括取り込み', () => {
       type: 'MealValidationError',
       message: '2件目の記録が不正です: 品名を入力してください',
     })
-    const duplicated = await call('POST', '/api/meals/import', { body: { records: [imported(), imported()] } })
+    const duplicated = await call('POST', '/api/import', { body: { records: [imported(), imported()] } })
     expect(duplicated.status).toBe(400)
-    const badTime = await call('POST', '/api/meals/import', { body: { records: [imported({ updatedAt: 'x' })] } })
+    const badTime = await call('POST', '/api/import', { body: { records: [imported({ updatedAt: 'x' })] } })
     expect(badTime.status).toBe(400)
-    const notArray = await call('POST', '/api/meals/import', { body: { records: 'x' } })
+    const notArray = await call('POST', '/api/import', { body: { records: 'x' } })
     expect(notArray.status).toBe(400)
 
     expect((await call('GET', '/api/meals')).body.meals).toEqual([kept])
@@ -504,7 +514,7 @@ describe('全件の取得と一括取り込み', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const records = Array.from({ length: 250 }, (_, index) => imported({ id: `r${index}` }))
 
-    const response = await call('POST', '/api/meals/import', { db: failingDb, body: { records } })
+    const response = await call('POST', '/api/import', { db: failingDb, body: { records } })
     expect(response.status).toBe(500)
     expect(response.body.error.type).toBe('MealStorageError')
     expect((await call('GET', '/api/meals')).body.meals).toEqual([kept])
@@ -534,7 +544,7 @@ describe('他の人の記録', () => {
 
     expect((await call('PATCH', `/api/meals/${bobMeal.id}`, { body: { name: '書き換え' } })).status).toBe(404)
     expect((await call('DELETE', `/api/meals/${bobMeal.id}`)).status).toBe(404)
-    expect((await call('POST', '/api/meals/mark-planned-as-eaten', { body: { date: '2026-12-01' } })).body.meals).toEqual(
+    expect((await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-12-01' } })).body.meals).toEqual(
       [],
     )
     expect((await call('GET', `/api/meals/${bobMeal.id}`, { as: BOB })).body.meal).toEqual(bobMeal)
@@ -544,7 +554,7 @@ describe('他の人の記録', () => {
     const { call, bobMeal } = await setUp()
 
     const mine = imported({ id: bobMeal.id, name: 'アリスの品' })
-    expect((await call('POST', '/api/meals/import', { body: { records: [mine] } })).status).toBe(204)
+    expect((await call('POST', '/api/import', { body: { records: [mine] } })).status).toBe(204)
     expect((await call('GET', `/api/meals/${bobMeal.id}`)).body.meal).toEqual(mine)
     expect((await call('GET', `/api/meals/${bobMeal.id}`, { as: BOB })).body.meal).toEqual(bobMeal)
   })
@@ -561,11 +571,11 @@ describe('リクエストの形', () => {
     ['POST', '/api/meals', { body: JSON.stringify(base) }],
     ['PATCH', '/api/meals/a', { body: JSON.stringify({ name: 'パン' }) }],
     ['DELETE', '/api/meals/a', {}],
-    ['POST', '/api/meals/import', { body: JSON.stringify({ records: [] }) }],
-    ['POST', '/api/meals/mark-planned-as-eaten', { body: JSON.stringify({ date: '2026-11-06' }) }],
+    ['POST', '/api/import', { body: JSON.stringify({ records: [] }) }],
+    ['POST', '/api/mark-planned-as-eaten', { body: JSON.stringify({ date: '2026-11-06' }) }],
   ])('書き込み（%s %s）は Content-Type が application/json でなければ 415 で、何も変えない', async (method, path, init) => {
     const call = createClient()
-    await call('POST', '/api/meals/import', { body: { records: [imported({ id: 'a', status: 'planned' })] } })
+    await call('POST', '/api/import', { body: { records: [imported({ id: 'a', status: 'planned' })] } })
     const before = (await call('GET', '/api/meals')).body.meals
 
     for (const contentType of ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data; boundary=x']) {

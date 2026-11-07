@@ -230,10 +230,10 @@ npm run dev:api
 | `create(input)` | `POST /api/meals` | 作成の値（`date`、`mealType`、`name`、`status`。`genre`、`dishType` は省略すると未設定） | 201 `{ "meal": 記録 }` |
 | `update(id, changes)` | `PATCH /api/meals/<id>` | 変える項目だけ（例: `{ "status": "eaten" }`。`null` は未設定に戻す） | 200 `{ "meal": 記録 }` |
 | `delete(id)` | `DELETE /api/meals/<id>` | なし | 204（本文なし） |
-| `markPlannedAsEatenBefore(date)` | `POST /api/meals/mark-planned-as-eaten` | `{ "date": "YYYY-MM-DD" }`（基準の日。端末の現地の日付を呼び出し側が渡す。サーバーの時刻からは決めない） | 200 `{ "meals": [更新した記録, …] }` |
-| `importRecords(records)` | `POST /api/meals/import` | `{ "records": [記録, …] }` | 204（本文なし） |
+| `markPlannedAsEatenBefore(date)` | `POST /api/mark-planned-as-eaten` | `{ "date": "YYYY-MM-DD" }`（基準の日。端末の現地の日付を呼び出し側が渡す。サーバーの時刻からは決めない） | 200 `{ "meals": [更新した記録, …] }` |
+| `importRecords(records)` | `POST /api/import` | `{ "records": [記録, …] }` | 204（本文なし） |
 
-- `<id>` は `encodeURIComponent` でエンコードする（取り込んだ記録の `id` には `/` なども入りうる）
+- `<id>` は `encodeURIComponent` でエンコードする（取り込んだ記録の `id` には `/` なども入りうる）。`/api/meals/<id>` は、`id` が何でも記録を指す（操作用のアドレスは `/api/meals/` の外に置いている）
 - 一覧は、日付 → 区分（朝・昼・夜・間食）→ 作成日時 → ID の順に並ぶ
 - 一覧の取得の条件は、なし・`date`・`from` と `to` のどれか。ほかの組み合わせは 400
 - 一括の取り込みは、全部保存するか、何も保存しないかのどちらか（D1 の batch で、1つのトランザクションにする）。記録は100件ずつ JSON の文字列1つにまとめて渡すので、数百件でも D1 の変数の個数の上限に当たらない

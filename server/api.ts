@@ -164,13 +164,14 @@ function matchRoute(pathname: string): { route: Route; params: string[] } {
   } catch {
     throw new HttpError(404, 'RouteNotFound', `この API はありません: ${pathname}`)
   }
-  if (decoded[0] === 'api' && decoded[1] === 'meals') {
-    if (decoded.length === 2) return { route: mealsRoute, params: [] }
-    if (decoded.length === 3) {
-      if (decoded[2] === 'mark-planned-as-eaten') return { route: markPlannedRoute, params: [] }
-      if (decoded[2] === 'import') return { route: importRoute, params: [] }
-      return { route: mealRoute, params: [decoded[2]] }
-    }
+  // 操作用のアドレスは /api/meals/ の外に置く（/api/meals/<id> は、どんな ID でも記録を指すようにするため）
+  if (decoded[0] === 'api' && decoded.length === 2) {
+    if (decoded[1] === 'meals') return { route: mealsRoute, params: [] }
+    if (decoded[1] === 'mark-planned-as-eaten') return { route: markPlannedRoute, params: [] }
+    if (decoded[1] === 'import') return { route: importRoute, params: [] }
+  }
+  if (decoded[0] === 'api' && decoded[1] === 'meals' && decoded.length === 3) {
+    return { route: mealRoute, params: [decoded[2]] }
   }
   throw new HttpError(404, 'RouteNotFound', `この API はありません: ${pathname}`)
 }
