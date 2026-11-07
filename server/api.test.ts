@@ -103,6 +103,11 @@ function interruptedDb(prefix: string, interrupt: () => Promise<unknown>, times 
   }
 }
 
+/** 1件の記録のアドレス */
+function mealPath(id: string): string {
+  return `/api/meal?id=${encodeURIComponent(id)}`
+}
+
 const base = {
   date: '2026-11-06',
   mealType: 'lunch',
@@ -142,7 +147,7 @@ describe('作成・取得・更新・削除', () => {
       createdAt: '2026-11-06T00:00:00.000Z',
       updatedAt: '2026-11-06T00:00:00.000Z',
     })
-    const got = await call('GET', `/api/meals/${created.body.meal.id}`)
+    const got = await call('GET', mealPath(created.body.meal.id))
     expect(got.status).toBe(200)
     expect(got.body).toEqual({ meal: created.body.meal })
   })
@@ -156,7 +161,7 @@ describe('作成・取得・更新・削除', () => {
 
   it('ない ID を1件取得すると 404（MealNotFoundError）', async () => {
     const call = createClient()
-    const response = await call('GET', '/api/meals/missing')
+    const response = await call('GET', mealPath('missing'))
 
     expect(response.status).toBe(404)
     expect(response.body.error.type).toBe('MealNotFoundError')
@@ -165,7 +170,7 @@ describe('作成・取得・更新・削除', () => {
   it('更新すると渡した項目だけ変わり、updatedAt は変わって createdAt は変わらない', async () => {
     const call = createClient()
     const created = (await call('POST', '/api/meals', { body: { ...base, status: 'planned', genre: 'japanese' } })).body.meal
-    const updated = await call('PATCH', `/api/meals/${created.id}`, { body: { status: 'eaten', dishType: 'main' } })
+    const updated = await call('PATCH', mealPath(created.id), { body: { status: 'eaten', dishType: 'main' } })
 
     expect(updated.status).toBe(200)
     expect(updated.body.meal).toEqual({
@@ -174,13 +179,13 @@ describe('作成・取得・更新・削除', () => {
       dishType: 'main',
       updatedAt: '2026-11-06T00:00:01.000Z',
     })
-    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toEqual(updated.body.meal)
+    expect((await call('GET', mealPath(created.id))).body.meal).toEqual(updated.body.meal)
   })
 
   it('ジャンルを null にすると未設定に戻せる', async () => {
     const call = createClient()
     const created = (await call('POST', '/api/meals', { body: { ...base, genre: 'chinese' } })).body.meal
-    const updated = await call('PATCH', `/api/meals/${created.id}`, { body: { genre: null } })
+    const updated = await call('PATCH', mealPath(created.id), { body: { genre: null } })
 
     expect(updated.body.meal.genre).toBeNull()
   })
@@ -189,7 +194,7 @@ describe('作成・取得・更新・削除', () => {
     const fixed = new Date('2026-11-06T00:00:00.000Z')
     const call = createClient({ now: () => fixed })
     const created = (await call('POST', '/api/meals', { body: base })).body.meal
-    const updated = (await call('PATCH', `/api/meals/${created.id}`, { body: { name: 'パン' } })).body.meal
+    const updated = (await call('PATCH', mealPath(created.id), { body: { name: 'パン' } })).body.meal
 
     expect(updated.updatedAt > created.updatedAt).toBe(true)
     expect(updated.createdAt).toBe(created.createdAt)
@@ -199,20 +204,20 @@ describe('作成・取得・更新・削除', () => {
     const call = createClient()
     const created = (await call('POST', '/api/meals', { body: { ...base, status: 'planned' } })).body.meal
     // 品名の更新が記録を読んだ直後に、状態の更新を終わらせる
-    const db = interruptedDb('SELECT id,', () => call('PATCH', `/api/meals/${created.id}`, { body: { status: 'eaten' } }))
+    const db = interruptedDb('SELECT id,', () => call('PATCH', mealPath(created.id), { body: { status: 'eaten' } }))
 
-    const updated = await call('PATCH', `/api/meals/${created.id}`, { db, body: { name: 'パン' } })
+    const updated = await call('PATCH', mealPath(created.id), { db, body: { name: 'パン' } })
     expect(updated.status).toBe(200)
     expect(updated.body.meal).toMatchObject({ name: 'パン', status: 'eaten' })
-    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toEqual(updated.body.meal)
+    expect((await call('GET', mealPath(created.id))).body.meal).toEqual(updated.body.meal)
   })
 
   it('読んでから書くまでの間に削除されたら、更新は 404 で、記録は戻らない', async () => {
     const call = createClient()
     const created = (await call('POST', '/api/meals', { body: base })).body.meal
-    const db = interruptedDb('SELECT id,', () => call('DELETE', `/api/meals/${created.id}`))
+    const db = interruptedDb('SELECT id,', () => call('DELETE', mealPath(created.id)))
 
-    const updated = await call('PATCH', `/api/meals/${created.id}`, { db, body: { name: 'パン' } })
+    const updated = await call('PATCH', mealPath(created.id), { db, body: { name: 'パン' } })
     expect(updated.status).toBe(404)
     expect(updated.body.error.type).toBe('MealNotFoundError')
     expect((await call('GET', '/api/meals')).body.meals).toEqual([])
@@ -224,15 +229,15 @@ describe('作成・取得・更新・削除', () => {
     let count = 0
     const db = interruptedDb(
       'SELECT id,',
-      () => call('PATCH', `/api/meals/${created.id}`, { body: { name: `割り込み${++count}` } }),
+      () => call('PATCH', mealPath(created.id), { body: { name: `割り込み${++count}` } }),
       Infinity,
     )
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    const updated = await call('PATCH', `/api/meals/${created.id}`, { db, body: { status: 'planned' } })
+    const updated = await call('PATCH', mealPath(created.id), { db, body: { status: 'planned' } })
     expect(updated.status).toBe(500)
     expect(updated.body.error.type).toBe('MealStorageError')
-    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toMatchObject({ name: `割り込み${count}`, status: 'eaten' })
+    expect((await call('GET', mealPath(created.id))).body.meal).toMatchObject({ name: `割り込み${count}`, status: 'eaten' })
   })
 
   it('削除すると 204 で、取得できなくなる', async () => {
@@ -240,32 +245,58 @@ describe('作成・取得・更新・削除', () => {
     const kept = (await call('POST', '/api/meals', { body: base })).body.meal
     const removed = (await call('POST', '/api/meals', { body: { ...base, name: 'パン' } })).body.meal
 
-    const response = await call('DELETE', `/api/meals/${removed.id}`)
+    const response = await call('DELETE', mealPath(removed.id))
     expect(response.status).toBe(204)
     expect(response.body).toBeNull()
-    expect((await call('GET', `/api/meals/${removed.id}`)).status).toBe(404)
+    expect((await call('GET', mealPath(removed.id))).status).toBe(404)
     expect((await call('GET', `/api/meals?date=${base.date}`)).body.meals).toEqual([kept])
   })
 
-  it('ID に「/」などを含む記録も、エンコードしたアドレスで扱える', async () => {
+  it.each([
+    ['「/」などを含む', 'a/b c?&id=x#'],
+    ['「.」だけの', '.'],
+    ['「..」だけの', '..'],
+    ['操作の名前と同じ', 'import'],
+    ['操作の名前と同じ', 'mark-planned-as-eaten'],
+  ])('ID が%s記録（%s）も、取得・更新・削除できる', async (_, id) => {
     const call = createClient()
-    const id = 'a/b c?'
-    await call('POST', '/api/import', { body: { records: [imported({ id })] } })
-    const path = `/api/meals/${encodeURIComponent(id)}`
+    await call('POST', '/api/import', { body: { records: [imported({ id }), imported({ id: 'other' })] } })
+    const path = mealPath(id)
 
     expect((await call('GET', path)).body.meal.id).toBe(id)
-    expect((await call('PATCH', path, { body: { name: 'パン' } })).body.meal.name).toBe('パン')
+    expect((await call('PATCH', path, { body: { name: 'パン' } })).body.meal).toMatchObject({ id, name: 'パン' })
     expect((await call('DELETE', path)).status).toBe(204)
+    expect((await call('GET', '/api/meals')).body.meals.map((record: MealRecord) => record.id)).toEqual(['other'])
   })
 
-  it.each(['import', 'mark-planned-as-eaten'])('ID が操作の名前と同じ記録（%s）も、取得・更新・削除できる', async (id) => {
+  it.each([
+    ['id がない', '/api/meal'],
+    ['id が空', '/api/meal?id='],
+    ['id が2つある', '/api/meal?id=a&id=b'],
+    ['知らない条件がある', '/api/meal?id=a&date=2026-11-06'],
+  ])('%s なら 400（MealValidationError）', async (_, path) => {
     const call = createClient()
-    await call('POST', '/api/import', { body: { records: [imported({ id })] } })
-    const path = `/api/meals/${id}`
+    await call('POST', '/api/import', { body: { records: [imported({ id: 'a' })] } })
 
-    expect((await call('GET', path)).body.meal.id).toBe(id)
-    expect((await call('PATCH', path, { body: { name: 'パン' } })).body.meal.name).toBe('パン')
-    expect((await call('DELETE', path)).status).toBe(204)
+    for (const [method, body] of [
+      ['GET', undefined],
+      ['PATCH', { name: 'パン' }],
+      ['DELETE', undefined],
+    ] as const) {
+      const response = await call(method, path, { body })
+      expect(response.status).toBe(400)
+      expect(response.body.error.type).toBe('MealValidationError')
+    }
+    expect((await call('GET', mealPath('a'))).body.meal).toEqual(imported({ id: 'a' }))
+  })
+
+  it('パスに ID を入れたアドレス（/api/meals/<id>）はない（404）', async () => {
+    const call = createClient()
+    await call('POST', '/api/import', { body: { records: [imported({ id: 'a' })] } })
+
+    const response = await call('GET', '/api/meals/a')
+    expect(response.status).toBe(404)
+    expect(response.body.error.type).toBe('RouteNotFound')
   })
 })
 
@@ -424,11 +455,11 @@ describe('不正な値', () => {
   it.each(invalidInputs)('更新: %s なら 400 で、記録は変わらない', async (_, override) => {
     const call = createClient()
     const created = (await call('POST', '/api/meals', { body: base })).body.meal
-    const response = await call('PATCH', `/api/meals/${created.id}`, { body: override })
+    const response = await call('PATCH', mealPath(created.id), { body: override })
 
     expect(response.status).toBe(400)
     expect(response.body.error.type).toBe('MealValidationError')
-    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toEqual(created)
+    expect((await call('GET', mealPath(created.id))).body.meal).toEqual(created)
   })
 
   it.each([
@@ -447,7 +478,7 @@ describe('不正な値', () => {
 describe('存在しない ID', () => {
   it('更新すると 404（MealNotFoundError）', async () => {
     const call = createClient()
-    const response = await call('PATCH', '/api/meals/missing', { body: { name: 'パン' } })
+    const response = await call('PATCH', mealPath('missing'), { body: { name: 'パン' } })
 
     expect(response.status).toBe(404)
     expect(response.body.error.type).toBe('MealNotFoundError')
@@ -456,7 +487,7 @@ describe('存在しない ID', () => {
   it('削除すると 404（MealNotFoundError）で、他の記録は残る', async () => {
     const call = createClient()
     await call('POST', '/api/meals', { body: base })
-    const response = await call('DELETE', '/api/meals/missing')
+    const response = await call('DELETE', mealPath('missing'))
 
     expect(response.status).toBe(404)
     expect(response.body.error.type).toBe('MealNotFoundError')
@@ -486,10 +517,10 @@ describe('日が過ぎた予定の更新', () => {
     ]) {
       expect(after).toEqual({ ...before, status: 'eaten', updatedAt: after.updatedAt })
       expect(Date.parse(after.updatedAt)).toBeGreaterThan(Date.parse(before.updatedAt))
-      expect((await call('GET', `/api/meals/${before.id}`)).body.meal).toEqual(after)
+      expect((await call('GET', mealPath(before.id))).body.meal).toEqual(after)
     }
     for (const unchanged of [eaten, today, future]) {
-      expect((await call('GET', `/api/meals/${unchanged.id}`)).body.meal).toEqual(unchanged)
+      expect((await call('GET', mealPath(unchanged.id))).body.meal).toEqual(unchanged)
     }
   })
 
@@ -501,16 +532,16 @@ describe('日が過ぎた予定の更新', () => {
       await call('POST', '/api/meals', { body: { ...base, date: '2026-11-04', mealType: 'dinner', status: 'planned' } })
     ).body.meal as MealRecord
     // 予定を読んだ直後に、1件の日付を基準の日より後へ移す
-    const db = interruptedDb('SELECT id,', () => call('PATCH', `/api/meals/${moved.id}`, { body: { date: '2026-11-07' } }))
+    const db = interruptedDb('SELECT id,', () => call('PATCH', mealPath(moved.id), { body: { date: '2026-11-07' } }))
 
     const response = await call('POST', '/api/mark-planned-as-eaten', { db, body: { date: '2026-11-06' } })
     expect(response.status).toBe(200)
     expect(response.body.meals.map((record: MealRecord) => record.id)).toEqual([kept.id])
-    expect((await call('GET', `/api/meals/${moved.id}`)).body.meal).toMatchObject({
+    expect((await call('GET', mealPath(moved.id))).body.meal).toMatchObject({
       date: '2026-11-07',
       status: 'planned',
     })
-    expect((await call('GET', `/api/meals/${kept.id}`)).body.meal.status).toBe('eaten')
+    expect((await call('GET', mealPath(kept.id))).body.meal.status).toBe('eaten')
   })
 
   it('予定を読んでから書くまでの間に別の更新が割り込んでも、更新日時は割り込んだ更新より後になる', async () => {
@@ -522,7 +553,7 @@ describe('日が過ぎた予定の更新', () => {
     let patched: MealRecord | undefined
     // 予定を読んだ直後に、予定のまま品名を変える
     const db = interruptedDb('SELECT id,', async () => {
-      patched = (await call('PATCH', `/api/meals/${created.id}`, { body: { name: 'パン' } })).body.meal
+      patched = (await call('PATCH', mealPath(created.id), { body: { name: 'パン' } })).body.meal
     })
 
     const response = await call('POST', '/api/mark-planned-as-eaten', { db, body: { date: '2026-11-06' } })
@@ -531,7 +562,7 @@ describe('日が過ぎた予定の更新', () => {
     expect(response.body.meals).toHaveLength(1)
     expect(marked).toMatchObject({ id: created.id, name: 'パン', status: 'eaten' })
     expect(Date.parse(marked.updatedAt)).toBeGreaterThan(Date.parse(patched!.updatedAt))
-    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toEqual(marked)
+    expect((await call('GET', mealPath(created.id))).body.meal).toEqual(marked)
   })
 
   it('予定の更新で割り込みが続いて書き込めなければ 500（MealStorageError）で、割り込んだ変更は残る', async () => {
@@ -541,7 +572,7 @@ describe('日が過ぎた予定の更新', () => {
     let count = 0
     const db = interruptedDb(
       'SELECT id,',
-      () => call('PATCH', `/api/meals/${created.id}`, { body: { name: `割り込み${++count}` } }),
+      () => call('PATCH', mealPath(created.id), { body: { name: `割り込み${++count}` } }),
       Infinity,
     )
     vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -549,7 +580,7 @@ describe('日が過ぎた予定の更新', () => {
     const response = await call('POST', '/api/mark-planned-as-eaten', { db, body: { date: '2026-11-06' } })
     expect(response.status).toBe(500)
     expect(response.body.error.type).toBe('MealStorageError')
-    expect((await call('GET', `/api/meals/${created.id}`)).body.meal).toMatchObject({
+    expect((await call('GET', mealPath(created.id))).body.meal).toMatchObject({
       name: `割り込み${count}`,
       status: 'planned',
     })
@@ -610,9 +641,9 @@ describe('全件の取得と一括取り込み', () => {
     const response = await call('POST', '/api/import', { body: { records: [imported(), replacement] } })
 
     expect(response.status).toBe(204)
-    expect((await call('GET', '/api/meals/imported')).body.meal).toEqual(imported())
-    expect((await call('GET', `/api/meals/${replaced.id}`)).body.meal).toEqual(replacement)
-    expect((await call('GET', `/api/meals/${kept.id}`)).body.meal).toEqual(kept)
+    expect((await call('GET', mealPath('imported'))).body.meal).toEqual(imported())
+    expect((await call('GET', mealPath(replaced.id))).body.meal).toEqual(replacement)
+    expect((await call('GET', mealPath(kept.id))).body.meal).toEqual(kept)
     expect((await call('GET', '/api/meals')).body.meals).toHaveLength(3)
   })
 
@@ -620,7 +651,7 @@ describe('全件の取得と一括取り込み', () => {
     const call = createClient()
     await call('POST', '/api/import', { body: { records: [imported({ name: ' カレー  ' })] } })
 
-    expect((await call('GET', '/api/meals/imported')).body.meal.name).toBe('カレー')
+    expect((await call('GET', mealPath('imported'))).body.meal.name).toBe('カレー')
   })
 
   it('0件の取り込みは何も変えない', async () => {
@@ -696,7 +727,7 @@ describe('他の人の記録', () => {
 
     expect((await call('GET', `/api/meals?date=${base.date}`)).body.meals).toEqual([])
     expect((await call('GET', `/api/meals?from=${base.date}&to=${base.date}`)).body.meals).toEqual([])
-    expect((await call('GET', `/api/meals/${bobMeal.id}`)).status).toBe(404)
+    expect((await call('GET', mealPath(bobMeal.id))).status).toBe(404)
     expect((await call('GET', '/api/meals')).body.meals).toEqual([])
     expect((await call('GET', '/api/meals', { as: BOB })).body.meals).toEqual([bobMeal])
   })
@@ -704,12 +735,12 @@ describe('他の人の記録', () => {
   it('更新・削除・日が過ぎた予定の更新で変えられない', async () => {
     const { call, bobMeal } = await setUp()
 
-    expect((await call('PATCH', `/api/meals/${bobMeal.id}`, { body: { name: '書き換え' } })).status).toBe(404)
-    expect((await call('DELETE', `/api/meals/${bobMeal.id}`)).status).toBe(404)
+    expect((await call('PATCH', mealPath(bobMeal.id), { body: { name: '書き換え' } })).status).toBe(404)
+    expect((await call('DELETE', mealPath(bobMeal.id))).status).toBe(404)
     expect((await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-12-01' } })).body.meals).toEqual(
       [],
     )
-    expect((await call('GET', `/api/meals/${bobMeal.id}`, { as: BOB })).body.meal).toEqual(bobMeal)
+    expect((await call('GET', mealPath(bobMeal.id), { as: BOB })).body.meal).toEqual(bobMeal)
   })
 
   it('同じ ID の記録を取り込んでも、他の人の記録は変わらず、別の記録として保存される', async () => {
@@ -717,22 +748,22 @@ describe('他の人の記録', () => {
 
     const mine = imported({ id: bobMeal.id, name: 'アリスの品' })
     expect((await call('POST', '/api/import', { body: { records: [mine] } })).status).toBe(204)
-    expect((await call('GET', `/api/meals/${bobMeal.id}`)).body.meal).toEqual(mine)
-    expect((await call('GET', `/api/meals/${bobMeal.id}`, { as: BOB })).body.meal).toEqual(bobMeal)
+    expect((await call('GET', mealPath(bobMeal.id))).body.meal).toEqual(mine)
+    expect((await call('GET', mealPath(bobMeal.id), { as: BOB })).body.meal).toEqual(bobMeal)
   })
 
   it('メールアドレスの大文字と小文字は区別しない', async () => {
     const { call, bobMeal } = await setUp()
 
-    expect((await call('GET', `/api/meals/${bobMeal.id}`, { as: 'Bob@Example.COM' })).body.meal).toEqual(bobMeal)
+    expect((await call('GET', mealPath(bobMeal.id), { as: 'Bob@Example.COM' })).body.meal).toEqual(bobMeal)
   })
 })
 
 describe('リクエストの形', () => {
   it.each([
     ['POST', '/api/meals', { body: JSON.stringify(base) }],
-    ['PATCH', '/api/meals/a', { body: JSON.stringify({ name: 'パン' }) }],
-    ['DELETE', '/api/meals/a', {}],
+    ['PATCH', mealPath('a'), { body: JSON.stringify({ name: 'パン' }) }],
+    ['DELETE', mealPath('a'), {}],
     ['POST', '/api/import', { body: JSON.stringify({ records: [] }) }],
     ['POST', '/api/mark-planned-as-eaten', { body: JSON.stringify({ date: '2026-11-06' }) }],
   ])('書き込み（%s %s）は Content-Type が application/json でなければ 415 で、何も変えない', async (method, path, init) => {
@@ -764,7 +795,7 @@ describe('リクエストの形', () => {
     const notFound = await call('GET', '/api/other')
     expect(notFound.status).toBe(404)
     expect(notFound.body.error.type).toBe('RouteNotFound')
-    const notAllowed = await call('PUT', '/api/meals/a', { body: base })
+    const notAllowed = await call('PUT', mealPath('a'), { body: base })
     expect(notAllowed.status).toBe(405)
     expect(notAllowed.body.error.type).toBe('MethodNotAllowed')
     expect(notAllowed.headers.get('Allow')).toBe('GET, PATCH, DELETE')
@@ -790,10 +821,10 @@ describe('保存先の失敗', () => {
 
     for (const [method, path, body] of [
       ['GET', '/api/meals', undefined],
-      ['GET', '/api/meals/a', undefined],
+      ['GET', mealPath('a'), undefined],
       ['POST', '/api/meals', base],
-      ['PATCH', '/api/meals/a', { name: 'パン' }],
-      ['DELETE', '/api/meals/a', undefined],
+      ['PATCH', mealPath('a'), { name: 'パン' }],
+      ['DELETE', mealPath('a'), undefined],
     ] as const) {
       const response = await call(method, path, { db: brokenDb, body })
       expect(response.status).toBe(500)

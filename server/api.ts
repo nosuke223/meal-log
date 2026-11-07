@@ -61,7 +61,6 @@ type RouteContext = {
   repository: MealRepository
   url: URL
   request: Request
-  params: string[]
 }
 
 /** API のリクエストを処理する関数を作る */
@@ -81,7 +80,7 @@ export function createApiHandler(options: ApiOptions = {}) {
       if (email === null) throw new HttpError(401, 'Unauthorized', 'ログインしていないか、ログインの情報が正しくありません')
 
       const url = new URL(request.url)
-      const { route, params } = matchRoute(url.pathname)
+      const route = matchRoute(url.pathname)
       const handler = route.methods[request.method]
       if (!handler) {
         const allow = Object.keys(route.methods).join(', ')
@@ -91,7 +90,7 @@ export function createApiHandler(options: ApiOptions = {}) {
         throw new HttpError(415, 'UnsupportedMediaType', '書き込みのリクエストは Content-Type: application/json にしてください')
       }
       const repository = createD1MealRepository(env.DB, email, options)
-      return await handler({ repository, url, request, params })
+      return await handler({ repository, url, request })
     } catch (error) {
       return errorResponse(error)
     }
@@ -117,22 +116,36 @@ const mealsRoute: Route = {
   },
 }
 
+// 1件の記録は、ID をクエリ（/api/meal?id=<id>）で指定する。パスに入れると、「.」や「..」だけの ID が
+// URL の正規化で消えて、その記録を扱えなくなるため
 const mealRoute: Route = {
   methods: {
-    async GET({ repository, params }) {
-      const meal = await repository.get(params[0])
-      if (meal === null) throw new MealNotFoundError(params[0])
+    async GET({ repository, url }) {
+      const id = recordId(url)
+      const meal = await repository.get(id)
+      if (meal === null) throw new MealNotFoundError(id)
       return json(200, { meal })
     },
-    async PATCH({ repository, request, params }) {
+    async PATCH({ repository, request, url }) {
+      const id = recordId(url)
       const changes = await readObject(request)
-      return json(200, { meal: await repository.update(params[0], changes as MealChanges) })
+      return json(200, { meal: await repository.update(id, changes as MealChanges) })
     },
-    async DELETE({ repository, params }) {
-      await repository.delete(params[0])
+    async DELETE({ repository, url }) {
+      await repository.delete(recordId(url))
       return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
     },
   },
+}
+
+/** クエリの id を読む。id がない、ほかの条件がある、または同じ条件が重なっていたら MealValidationError */
+function recordId(url: URL): string {
+  const query = url.searchParams
+  const ids = query.getAll('id')
+  if ([...query.keys()].some((key) => key !== 'id') || ids.length !== 1 || ids[0] === '') {
+    throw new MealValidationError('id に記録の ID を1つだけ入れてください（例: /api/meal?id=<id>）')
+  }
+  return ids[0]
 }
 
 const markPlannedRoute: Route = {
@@ -156,7 +169,7 @@ const importRoute: Route = {
   },
 }
 
-function matchRoute(pathname: string): { route: Route; params: string[] } {
+function matchRoute(pathname: string): Route {
   const segments = pathname.split('/').filter((segment) => segment !== '')
   let decoded: string[]
   try {
@@ -164,14 +177,11 @@ function matchRoute(pathname: string): { route: Route; params: string[] } {
   } catch {
     throw new HttpError(404, 'RouteNotFound', `この API はありません: ${pathname}`)
   }
-  // 操作用のアドレスは /api/meals/ の外に置く（/api/meals/<id> は、どんな ID でも記録を指すようにするため）
   if (decoded[0] === 'api' && decoded.length === 2) {
-    if (decoded[1] === 'meals') return { route: mealsRoute, params: [] }
-    if (decoded[1] === 'mark-planned-as-eaten') return { route: markPlannedRoute, params: [] }
-    if (decoded[1] === 'import') return { route: importRoute, params: [] }
-  }
-  if (decoded[0] === 'api' && decoded[1] === 'meals' && decoded.length === 3) {
-    return { route: mealRoute, params: [decoded[2]] }
+    if (decoded[1] === 'meals') return mealsRoute
+    if (decoded[1] === 'meal') return mealRoute
+    if (decoded[1] === 'mark-planned-as-eaten') return markPlannedRoute
+    if (decoded[1] === 'import') return importRoute
   }
   throw new HttpError(404, 'RouteNotFound', `この API はありません: ${pathname}`)
 }
