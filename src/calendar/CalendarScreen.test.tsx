@@ -303,6 +303,15 @@ test('アドレスが明日以降の日なら、その日の記録の画面を�
   expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
 })
 
+test('アドレスが今日の日付なら、履歴を増やさずにアドレスを今日の記録の画面に置き換える', () => {
+  window.history.replaceState(null, '', '/#/day/2026-11-06')
+  const length = window.history.length
+  render(<App today={TODAY} />)
+  expect(window.location.hash).toBe('#/')
+  expect(window.history.length).toBe(length)
+  expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
+})
+
 test('アドレスの日付が不正なときは、今日の記録の画面を開く', () => {
   for (const hash of ['#/day/2026-02-30', '#/day/hello']) {
     window.history.replaceState(null, '', `/${hash}`)
@@ -382,6 +391,49 @@ describe('日付をまたいだとき', () => {
 
     crossMidnight()
     expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
+  })
+
+  test('明日のマスで開いた画面は、今日になるとアドレスが今日の記録の画面になり、さらに翌日の画面に変わる', async () => {
+    window.history.replaceState(null, '', '/#/calendar/2026-11')
+    render(<App />)
+    fireEvent.click(calendar().getByRole('button', { name: '11月7日' }))
+    fireEvent.click(screen.getByRole('button', { name: 'この日の記録を開く' }))
+    expect(window.location.hash).toBe('#/day/2026-11-07')
+    const length = window.history.length
+
+    crossMidnight()
+    expect(window.location.hash).toBe('#/')
+    expect(window.history.length).toBe(length)
+    expect(screen.getByText('2026年11月7日（土）')).toBeInTheDocument()
+
+    act(() => {
+      vi.setSystemTime(new Date(2026, 10, 8, 7, 0, 0))
+      vi.advanceTimersByTime(30_000)
+    })
+    expect(screen.getByText('2026年11月8日（日）')).toBeInTheDocument()
+
+    // 追加した品は、表示している今日の日付で記録される
+    const morning = within(screen.getByRole('region', { name: '朝' }))
+    fireEvent.change(morning.getByRole('textbox', { name: '新しい品名' }), { target: { value: 'パン' } })
+    fireEvent.click(morning.getByRole('button', { name: '追加' }))
+    await morning.findByRole('button', { name: /パン/ })
+    const stored = JSON.parse(window.localStorage.getItem(MEAL_STORAGE_KEY) ?? '{}') as { records: MealRecord[] }
+    expect(stored.records.map((record) => [record.date, record.name])).toEqual([['2026-11-08', 'パン']])
+  })
+
+  test('過去の日の画面と、まだ今日になっていない日の画面は、日付をまたいでもその日のまま', () => {
+    for (const [date, heading] of [
+      ['2026-11-05', '2026年11月5日（木）'],
+      ['2026-11-08', '2026年11月8日（日）'],
+    ]) {
+      vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
+      window.history.replaceState(null, '', `/#/day/${date}`)
+      const view = render(<App />)
+      crossMidnight()
+      expect(window.location.hash).toBe(`#/day/${date}`)
+      expect(screen.getByText(heading)).toBeInTheDocument()
+      view.unmount()
+    }
   })
 })
 

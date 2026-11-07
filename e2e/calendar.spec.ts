@@ -268,6 +268,20 @@ test('今日は、選んでいるマスのタップでも一覧のボタンで�
   await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
 })
 
+test('今日の日付のアドレスを開くと、履歴を増やさずに今日の記録の画面のアドレスに置き換わる', async ({ page }) => {
+  await page.goto('/#/calendar/2026-11')
+  const length = await page.evaluate<number>('history.length')
+  await page.goto('/#/day/2026-11-18')
+  await expect(page).toHaveURL(/#\/$/)
+  await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
+  // アドレスの書き換えで増えた分（1つ）だけで、置き換えでは増えない
+  expect(await page.evaluate<number>('history.length')).toBe(length + 1)
+
+  await page.reload()
+  await expect(page).toHaveURL(/#\/$/)
+  await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
+})
+
 test('アドレスの日付が不正なときは、今日の記録の画面が開き、明日以降の日はその日の画面が開く', async ({ page }) => {
   for (const hash of ['#/day/2026-02-30', '#/day/abc']) {
     await page.goto(`/${hash}`)
