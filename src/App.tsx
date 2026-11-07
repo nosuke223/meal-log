@@ -86,6 +86,18 @@ function App({ repository, today: fixedToday }: Props) {
   }
 
   const route = parseHash(hash, today)
+  // 今日の画面は1種類にする。表示している日が今日のとき（開いたとき、または開いたまま日付をまたいで
+  // 今日になったとき）は、今日の記録の画面にし、以後は日付をまたぐと翌日の画面に変わるようにする
+  if (route.screen === 'day' && route.date === today) {
+    setHash(todayHash())
+  }
+
+  // 上で今日の記録の画面にしたときに、アドレスも置き換える（履歴は増やさない）
+  useEffect(() => {
+    if (hash !== window.location.hash) {
+      window.history.replaceState(null, '', hash)
+    }
+  }, [hash])
 
   if (route.screen === 'data') {
     return <DataScreen repository={mealRepository} today={today} onBack={() => navigate(todayHash())} />
