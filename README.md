@@ -132,11 +132,27 @@ npm ci
 | `npm run build` | 型検査とビルドを行う（出力は `dist/`） |
 | `npm run e2e` | Playwright（Chromium）で画面を操作するテストを実行する。開発サーバーは自動で起動する |
 
+| `npm run db:migrate:local` | 手元の D1（wrangler のローカル。保存先は `.wrangler/`）に、D1 のマイグレーションを適用する |
+| `npm run dev:api` | API を含むアプリ全体を、手元の D1 で起動する（下の「API を含めて手元で動かす」） |
+
 `npm run e2e` を初めて実行する前に、ブラウザを入れてください。
 
 ```sh
 npx playwright install chromium
 ```
+
+`npm run test` は、API のテスト（`server/` の下）も実行します。API のテストは、wrangler（Miniflare）で手元に D1 を再現して使います（保存はせず、テストごとにメモリーの中に作る）。手元のポート（127.0.0.1）を開けない環境では、API のテストは失敗します。
+
+### API を含めて手元で動かす
+
+```sh
+npm run dev:api
+```
+
+画面をビルドし（`dist/`）、手元の D1 にマイグレーションを適用してから、`wrangler pages dev` で画面と API を起動します（<http://localhost:8788>）。認証は省き、`dev@example.com` の人として扱います（下の「認証」の `DEV_USER_EMAIL`）。画面のファイルを変えたら、起動し直してください。
+
+- 今の画面は、まだ API を使いません（保存先はブラウザ内のまま）。API は、`curl` などで直接呼んで確かめられる
+- 手元の D1 の設定は `wrangler.dev.jsonc` にある（手元とテスト専用。本番の D1 のデータベース ID は書かない）。名前を `wrangler.toml` などにすると、Pages の本番の設定として読まれるので、変えない
 
 ## 記録の形
 
@@ -192,3 +208,83 @@ npx playwright install chromium
 
 - キー `meal-log:meals` に、`{ "version": 1, "records": [...] }` の形の JSON で保存する
 - `version` は保存データの形のバージョン番号。形を変えたら上げる
+
+## サーバーの API
+
+記録をサーバー（Cloudflare Pages Functions と D1）に保存するための API です。保存の窓口の全操作に対応します。今の画面はまだ使いません（画面をつなぐのは次の段階）。
+
+- 入口は `functions/api/[[path]].ts`（`/api/` 以下のすべて）。処理は `server/api.ts`、D1 への保存は `server/d1MealRepository.ts`（窓口 `MealRepository` と同じ操作）
+- 検査の規則、並び順、作成日時の決め方は、ブラウザ内の窓口と同じ（`src/meals/mealRecord.ts` と `src/meals/repositoryRules.ts` を共有する）
+- 記録は、ログインしている人（メールアドレス）ごとに分けて保存する。すべての読み書きをその人の記録に絞るので、他の人の記録は、見えず、変えられない。別の人が同じ `id` の記録を取り込んでも、それぞれ別の記録になる
+
+### アドレスの表
+
+本文と応答は JSON です。記録1件の形は、上の「記録の形」と同じです。
+
+| 窓口の操作 | メソッドとアドレス | リクエストの本文 | 成功したときの応答 |
+| --- | --- | --- | --- |
+| `listByDate(date)` | `GET /api/meals?date=YYYY-MM-DD` | なし | 200 `{ "meals": [記録, …] }` |
+| `listByDateRange(from, to)` | `GET /api/meals?from=YYYY-MM-DD&to=YYYY-MM-DD` | なし | 200 `{ "meals": [記録, …] }` |
+| `listAll()` | `GET /api/meals` | なし | 200 `{ "meals": [記録, …] }` |
+| `get(id)` | `GET /api/meals/<id>` | なし | 200 `{ "meal": 記録 }`。ないときは 404（`MealNotFoundError`。窓口では `null` にする） |
+| `create(input)` | `POST /api/meals` | 作成の値（`date`、`mealType`、`name`、`status`。`genre`、`dishType` は省略すると未設定） | 201 `{ "meal": 記録 }` |
+| `update(id, changes)` | `PATCH /api/meals/<id>` | 変える項目だけ（例: `{ "status": "eaten" }`。`null` は未設定に戻す） | 200 `{ "meal": 記録 }` |
+| `delete(id)` | `DELETE /api/meals/<id>` | なし | 204（本文なし） |
+| `markPlannedAsEatenBefore(date)` | `POST /api/meals/mark-planned-as-eaten` | `{ "date": "YYYY-MM-DD" }`（基準の日。端末の現地の日付を呼び出し側が渡す。サーバーの時刻からは決めない） | 200 `{ "meals": [更新した記録, …] }` |
+| `importRecords(records)` | `POST /api/meals/import` | `{ "records": [記録, …] }` | 204（本文なし） |
+
+- `<id>` は `encodeURIComponent` でエンコードする（取り込んだ記録の `id` には `/` なども入りうる）
+- 一覧は、日付 → 区分（朝・昼・夜・間食）→ 作成日時 → ID の順に並ぶ
+- 一覧の取得の条件は、なし・`date`・`from` と `to` のどれか。ほかの組み合わせは 400
+- 一括の取り込みは、全部保存するか、何も保存しないかのどちらか（D1 の batch で、1つのトランザクションにする）。記録は100件ずつ JSON の文字列1つにまとめて渡すので、数百件でも D1 の変数の個数の上限に当たらない
+- 書き込み（`POST`、`PATCH`、`DELETE`）は、`Content-Type: application/json` のリクエストだけを受け付ける（`DELETE` も付ける。他の Web サイトのフォームからの送信を防ぐため）。ほかは 415
+- 応答には `Cache-Control: no-store` を付ける
+
+例（`npm run dev:api` で起動したとき）:
+
+```sh
+curl 'http://localhost:8788/api/meals?date=2026-11-06'
+curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json' -d '{"date":"2026-11-06","mealType":"lunch","name":"うどん","status":"eaten"}'
+```
+
+### エラー
+
+エラーの応答の本文は `{ "error": { "type": "…", "message": "…" } }` の形です。`type` でエラーの種類を見分けます（`message` は日本語の説明）。
+
+| 状態コード | `type` | 場合 |
+| --- | --- | --- |
+| 400 | `MealValidationError` | 不正な値（窓口の `MealValidationError` と同じ規則）。本文が JSON のオブジェクトとして読めないときも |
+| 401 | `Unauthorized` | JWT がない、検証に失敗した（署名が違う、期限切れ、AUD やチームが違う、メールアドレスがないなど） |
+| 404 | `MealNotFoundError` | 存在しない ID の取得・更新・削除（他の人の記録の ID も） |
+| 404 | `RouteNotFound` | ない API のアドレス |
+| 405 | `MethodNotAllowed` | アドレスが対応していないメソッド（`Allow` ヘッダーに使えるメソッド） |
+| 415 | `UnsupportedMediaType` | 書き込みの `Content-Type` が `application/json` でない |
+| 500 | `MealStorageError` | 保存先（D1）の失敗、保存データが壊れている |
+| 500 | `AuthConfigurationError` | 認証の環境変数が足りない・不正、Access の公開鍵を取得できない |
+
+### 認証
+
+Cloudflare Access が付けるヘッダー `Cf-Access-Jwt-Assertion` の JWT を検証し、中のメールアドレス（`email`）の人として扱います。
+
+- 署名（RS256）を、Access の公開鍵（`https://<チーム名>.cloudflareaccess.com/cdn-cgi/access/certs`）で確かめる。公開鍵は1時間使い回し、知らない鍵（`kid`）のときは取り直す
+- 発行元（`iss`）がそのチーム、`aud` に AUD タグが入っている、期限（`exp`）が切れていない、`nbf` が過ぎている、`email` がある、をすべて確かめる
+- メールアドレスは大文字と小文字を区別しない（小文字にそろえて保存・比較する）
+
+### 環境変数
+
+| 名前 | 内容 | 本番 |
+| --- | --- | --- |
+| `DB` | D1 のデータベース（バインディング） | 設定する（Cloudflare 側で） |
+| `ACCESS_TEAM_NAME` | Access のチーム名（`<チーム名>.cloudflareaccess.com` の `<チーム名>`。英数字とハイフン） | 設定する |
+| `ACCESS_AUD` | Access のアプリケーションの AUD タグ | 設定する |
+| `DEV_USER_EMAIL` | 手元の開発とテスト専用。設定すると JWT を検証せず、このメールアドレスの人として扱う | **本番に設定しない** |
+
+- `DEV_USER_EMAIL` が設定されていない（空も含む）ときは、必ず JWT を検証する。本番に設定すると、誰でもその人として記録を読み書きできてしまうので、絶対に設定しない
+- 本番の値（D1 のデータベース ID、チーム名、AUD タグ）は、リポジトリに書かず、Cloudflare 側で設定する
+
+### D1 の表
+
+表のスキーマは、`migrations/` の下のマイグレーションのファイルで管理します（`npm run db:migrate:local` で手元の D1 に適用する）。
+
+- 表 `meals`: 1行が1品。列は記録の項目（`meal_type` のように小文字とアンダースコアの名前）と、メールアドレスの列 `user_email`
+- 主キーは `user_email` + `id`。日ごと・期間の取得用に、`user_email` + `date` の索引がある
