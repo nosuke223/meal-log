@@ -25,6 +25,9 @@ export type D1MealRepositoryOptions = {
  */
 export const RECORDS_PER_STATEMENT = 100
 
+/** 読んでから書くまでの間に他の書き込みが割り込んだとき、読み直して試す回数の上限 */
+export const MAX_WRITE_ATTEMPTS = 10
+
 type MealRow = {
   id: string
   date: string
@@ -93,28 +96,33 @@ export function createD1MealRepository(
         dishType: input.dishType ?? null,
         status: input.status,
       })
-      // 同じミリ秒に続けて作っても作った順に並ぶよう、その人の保存済みのどの記録の作成日時よりも後にする
-      const latest = await withStorage('読み込めません', () =>
-        db
-          .prepare('SELECT MAX(created_at) AS latest FROM meals WHERE user_email = ?')
-          .bind(email)
-          .first<{ latest: string | null }>(),
-      )
-      const timestamp = createdAtFor(now(), latest?.latest ?? null)
-      const record: MealRecord = {
-        id: generateId(),
-        ...fields,
-        createdAt: timestamp,
-        updatedAt: timestamp,
+      const id = generateId()
+      for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
+        // 同じミリ秒に続けて作っても作った順に並ぶよう、その人の保存済みのどの記録の作成日時よりも後にする
+        const latest = await withStorage('読み込めません', () =>
+          db
+            .prepare('SELECT MAX(created_at) AS latest FROM meals WHERE user_email = ?')
+            .bind(email)
+            .first<{ latest: string | null }>(),
+        )
+        const timestamp = createdAtFor(now(), latest?.latest ?? null)
+        const record: MealRecord = { id, ...fields, createdAt: timestamp, updatedAt: timestamp }
+        // 読んでから書くまでの間に、同じ人の別の作成が割り込んで、この作成日時以降の記録ができていたら書かない
+        // （確かめるのと書くのを1つの文で行うので、間に他の書き込みは入らない）。
+        // ID が重なったときは、主キーの制約で失敗する（MealStorageError）
+        const result = await withStorage('書き込めません', () =>
+          db
+            .prepare(
+              `INSERT INTO meals (user_email, ${COLUMNS})
+               SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
+               WHERE NOT EXISTS (SELECT 1 FROM meals WHERE user_email = ?1 AND created_at >= ?9)`,
+            )
+            .bind(email, ...toValues(record))
+            .run(),
+        )
+        if (result.meta.changes > 0) return record
       }
-      // ID が重なったときは、主キーの制約で失敗する（MealStorageError）
-      await withStorage('書き込めません', () =>
-        db
-          .prepare(`INSERT INTO meals (user_email, ${COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .bind(email, ...toValues(record))
-          .run(),
-      )
-      return record
+      throw conflictError()
     },
 
     async update(id, changes) {
@@ -257,6 +265,11 @@ function toRecord(row: MealRow): MealRecord {
     const reason = error instanceof Error ? error.message : String(error)
     throw new MealStorageError(`保存データが壊れています（記録 ${row.id}: ${reason}）`)
   }
+}
+
+/** 他の書き込みとの重なりが続いて、書き込めなかったとき */
+function conflictError(): MealStorageError {
+  return new MealStorageError('ほかの操作と重なったため、保存先に書き込めません。もう一度試してください')
 }
 
 /** 保存先の操作が投げたエラーを MealStorageError に包む */

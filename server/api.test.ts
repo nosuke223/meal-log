@@ -62,6 +62,43 @@ function createClient(handlerOptions: Parameters<typeof createApiHandler>[0] = {
   }
 }
 
+/**
+ * prefix で始まる文を最初に実行した直後に、interrupt を1回だけ実行する D1。
+ * 読んでから書くまでの間に、別のリクエストの書き込みが割り込んだ状態を作る
+ */
+function interruptedDb(prefix: string, interrupt: () => Promise<unknown>): D1Database {
+  let interrupted = false
+  async function after(query: string) {
+    if (interrupted || !query.trimStart().startsWith(prefix)) return
+    interrupted = true
+    await interrupt()
+  }
+  function wrap(statement: D1PreparedStatement, query: string): D1PreparedStatement {
+    return {
+      bind: (...values) => wrap(statement.bind(...values), query),
+      first: async <T>() => {
+        const result = await statement.first<T>()
+        await after(query)
+        return result
+      },
+      all: async <T>() => {
+        const result = await statement.all<T>()
+        await after(query)
+        return result
+      },
+      run: async <T>() => {
+        const result = await statement.run<T>()
+        await after(query)
+        return result
+      },
+    }
+  }
+  return {
+    prepare: (query) => wrap(database.db.prepare(query), query),
+    batch: (statements) => database.db.batch(statements),
+  }
+}
+
 const base = {
   date: '2026-11-06',
   mealType: 'lunch',
@@ -260,6 +297,25 @@ describe('並び順', () => {
     expect(records.map((record) => record.name)).toEqual(names)
     expect(records[0].createdAt).toBe('2026-11-06T03:00:00.000Z')
     expect(records[2].createdAt).toBe('2026-11-06T03:00:00.002Z')
+  })
+
+  it('同じ人の作成が、作成日時を決めてから書くまでの間に割り込んでも、作成日時は重ならない', async () => {
+    const fixed = new Date('2026-11-06T03:00:00.000Z')
+    const ids = ['zzzz', 'aaaa']
+    let i = 0
+    const call = createClient({ now: () => fixed, generateId: () => ids[i++] })
+    // 1つ目の作成が最も遅い作成日時を読んだ直後に、2つ目の作成を終わらせる
+    const db = interruptedDb('SELECT MAX(created_at)', () => call('POST', '/api/meals', { body: { ...base, name: '割り込み' } }))
+
+    const created = await call('POST', '/api/meals', { db, body: { ...base, name: '先に始めた' } })
+    expect(created.status).toBe(201)
+
+    const records: MealRecord[] = (await call('GET', `/api/meals?date=${base.date}`)).body.meals
+    expect(records.map((record) => [record.name, record.createdAt])).toEqual([
+      ['割り込み', '2026-11-06T03:00:00.000Z'],
+      ['先に始めた', '2026-11-06T03:00:00.001Z'],
+    ])
+    expect(created.body.meal).toEqual(records[1])
   })
 
   it('時計を差し替えずに続けて作っても、作った順に並ぶ', async () => {
