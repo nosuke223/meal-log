@@ -1,0 +1,17 @@
+// 手元の開発とテスト専用の wrangler の設定（手元の D1 と、マイグレーションの場所）。
+// 本番の設定（D1 のデータベース ID、Access の値）は Cloudflare 側で行うので、ここには書かない。
+// Pages は wrangler.toml / wrangler.json / wrangler.jsonc だけを本番の設定として読むので、名前を変えている
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "meal-log",
+  "compatibility_date": "2026-11-01",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "meal-log",
+      // 手元の D1 を見分けるための名前（本番の ID ではない）。package.json の dev:api の --d1 と同じにする
+      "database_id": "meal-log-local",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

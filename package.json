@@ -8,7 +8,9 @@
     "lint": "eslint .",
     "test": "vitest run",
     "build": "tsc -b && vite build",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc",
+    "dev:api": "vite build && npm run db:migrate:local && wrangler pages dev dist --d1 DB=meal-log-local --compatibility-date 2026-11-01 --binding DEV_USER_EMAIL=dev@example.com"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -28,6 +30,7 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.1",
     "vite": "^8.3.6",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.0",
+    "wrangler": "^4.158.0"
   }
 }
