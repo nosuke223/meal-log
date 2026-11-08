@@ -5,7 +5,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileURLToPath } from 'node:url'
 import type { Plugin, ViteDevServer } from 'vite'
-import type { ApiEnv } from './api.ts'
+import type { ApiEnv, ApiErrorBody } from './api.ts'
 import type { D1Database } from './d1.ts'
 
 const CONFIG_PATH = fileURLToPath(new URL('../wrangler.dev.jsonc', import.meta.url))
@@ -40,8 +40,29 @@ export function devApiPlugin(): Plugin {
           next()
           return
         }
-        handleRequest(req, res).catch(next)
+        handleRequest(req, res).catch((error: unknown) => handleError(req, res, error))
       })
+
+      // エラーは Vite に渡さない（next(error) にしない）。Vite は、開いている画面にエラーの覆いを出し、
+      // 画面が1つも開いていないときは次に開いた画面に出すので、関係のない画面の操作をふさいでしまう
+      function handleError(req: IncomingMessage, res: ServerResponse, error: unknown) {
+        // 画面を移るなどで、ブラウザがリクエストを途中で切ったときは、返す相手がいないので何もしない
+        if (res.destroyed || req.socket.destroyed) return
+        server.config.logger.error(`[meal-log-dev-api] ${req.method} ${req.url}: ${String(error)}`, {
+          timestamp: true,
+          error: error instanceof Error ? error : undefined,
+        })
+        if (res.headersSent) {
+          res.end()
+          return
+        }
+        res.statusCode = 500
+        res.setHeader('Content-Type', 'application/json')
+        const body: ApiErrorBody = {
+          error: { type: 'MealStorageError', message: '開発サーバーの API でエラーが起きました' },
+        }
+        res.end(JSON.stringify(body))
+      }
 
       async function handleRequest(req: IncomingMessage, res: ServerResponse) {
         const api = await start()
