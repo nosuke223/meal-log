@@ -118,24 +118,30 @@ npx wrangler pages deploy dist --project-name meal-log --branch main
 
 ## 4. Access のアプリケーションとポリシーを作る
 
-ダッシュボードの「Zero Trust」→「Access」→「Applications」（名前や場所は画面の更新で変わることがあります）。
+独自ドメインを持たず `pages.dev` で公開する場合、通常の Self-hosted アプリケーションの作成画面では `pages.dev` のドメインを選べません（選べるのはアカウント内の有効な zone だけ）。そこで、Pages の「Enable access policy」が自動で作るアプリケーションを編集して使います（Cloudflare の [Pages の既知の問題](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)の手順）。独自ドメインを使う場合は、通常の Self-hosted アプリケーションを作ってもかまいません（Path を空にして、手順4-2 の 3 から 6 と同じ設定にする）。
 
-1. 「Add an application」→「Self-hosted」を選ぶ
-2. Application name: `meal-log`
-3. Session Duration: 好みの長さ（ログインの期限。切れると画面にエラーが出るので、読み込み直してログインし直す）
-4. Public hostname（Application domain）に、サイトのアドレスを入れる
-   - Domain: `<プロジェクト名>.pages.dev`
+### 4-1. Pages の Access policy を有効にする
+
+1. ダッシュボードの「Workers & Pages」→ `meal-log` →「Settings」→「General」→「Access policy」→「Enable access policy」を押す
+2. 案内に従って進む。Access のアプリケーションが自動で作られる
+
+作られるアプリケーションは、`*.<プロジェクト名>.pages.dev`（ワイルドカード）と `<プロジェクト名>.pages.dev` を対象にしています。このままだと、デプロイごとのプレビューのアドレスにも掛かります。
+
+### 4-2. 対象を本番のアドレスだけにする
+
+1. ダッシュボードの「Zero Trust」→「Access」→「Applications」（名前や場所は画面の更新で変わることがあります）を開き、4-1 で作られたアプリケーション（名前は `<プロジェクト名>` など）を編集する
+2. 「Application domain」（Public hostname）から、ワイルドカードのもの（`*.<プロジェクト名>.pages.dev`）を削除し、`<プロジェクト名>.pages.dev` だけにする
    - **Path は空にする**（サイト全体を守る。`/api` もこれで守られる）
-5. Policy を作る
-   - Policy name: `owner`
+3. Session Duration: 好みの長さ（ログインの期限。切れると画面にエラーが出るので、読み込み直してログインし直す）
+4. 「Policies」を確認する。自動で作られたポリシーが、所有者だけを許可しているものにする
    - Action: `Allow`
-   - Include: 「Emails」→ `<自分のメールアドレス>`（所有者のメールアドレスだけ。「Everyone」や「Emails ending in」にしない）
-6. 保存する
-7. 作ったアプリケーションの「Overview」にある **Application Audience (AUD) Tag** を控える（手順5で使う）
+   - Include: 「Emails」→ `<自分のメールアドレス>`（所有者のメールアドレスだけ。「Everyone」や「Emails ending in」にしない。自動で入った他の許可は削除する）
+5. 保存する
+6. このアプリケーションの「Overview」にある **Application Audience (AUD) Tag** を控える（手順5で使う）。手順5の `ACCESS_AUD` には、この編集したアプリケーションの AUD タグを使う
 
 > **注意（失敗しやすい所）: Access で `/api` も守ること。** Path を空にしてサイト全体を守れば、`/api` も同じアプリケーションに入ります。「`/` だけ」「画面のパスだけ」のように Path を決めると、`/api` が守られず、Access を通らない API の呼び出しになります（API も JWT を検証するので 401 になりますが、守りは二重にしておく）。別のアプリケーションに分けるときは、`/api` にも同じ許可の Policy を付けてください。
 
-> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<プロジェクト名>.pages.dev`）は、別のホスト名です。** Pages の「Settings」→「General」→「Access policy」で「Enable」にすると、プレビューのアドレスにも Access が掛かります（Pages が自動で作る Access のアプリケーションです）。手順7の「Access を通っていないときに 401 が返る」の確認では、この掛かっていないアドレスを使うので、確認の後で掛けてください。
+> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<プロジェクト名>.pages.dev`）は、別のホスト名です。** 4-2 でワイルドカードを外すと、プレビューのアドレスには Access が掛からなくなります。手順7の「Access を通っていないときに 401 が返る」の確認では、この掛かっていないアドレスを使います。プレビューにも記録の API が公開されるのを避けたいときは、手順3-3 のとおり「Preview」に `DB` のバインディングと手順5の環境変数を設定しないでおきます。そうすれば、プレビューの API は記録を読み書きできません。
 
 Zero Trust の **チーム名** は、「Settings」→「Custom Pages」の「Team domain」（`<チーム名>.cloudflareaccess.com`）の `<チーム名>` の部分です。控えます。
 
@@ -146,7 +152,7 @@ Zero Trust の **チーム名** は、「Settings」→「Custom Pages」の「T
 | Variable name | 値 |
 | --- | --- |
 | `ACCESS_TEAM_NAME` | `<チーム名>`（`<チーム名>.cloudflareaccess.com` の前の部分だけ。`https://` や `.cloudflareaccess.com` は付けない。英数字とハイフン） |
-| `ACCESS_AUD` | 手順4で控えた AUD タグ |
+| `ACCESS_AUD` | 手順4-2 で控えた AUD タグ（編集したアプリケーションのもの） |
 
 > **注意**: 環境変数の変更は、次のデプロイから効きます。設定したら、手順3-2のコマンドでもう一度デプロイしてください。
 
@@ -174,11 +180,11 @@ grep -rn DEV_USER_EMAIL wrangler.dev.jsonc wrangler.migrate.jsonc dist
 
 ## 7. 動作確認
 
-1. **開く**: ブラウザで `https://<プロジェクト名>.pages.dev` を開く。Access のログイン画面が出る。手順4で許可したメールアドレスでログインすると、今日の記録の画面が開く
+1. **開く**: ブラウザで `https://<プロジェクト名>.pages.dev` を開く。Access のログイン画面が出る。手順4-2 で許可したメールアドレスでログインすると、今日の記録の画面が開く
    - 許可していないメールアドレスでは、入れない（Access に拒否される）
 2. **記録する**: 昼の欄に品を追加する。読み込み直しても残っている
 3. **別の端末で見える**: 別の端末（またはシークレットウィンドウ）で同じアドレスを開き、同じメールアドレスでログインする。2. の記録が見える
-4. **Access を通っていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（デプロイごとに付く `https://<ハッシュ>.<プロジェクト名>.pages.dev`。デプロイしたときに wrangler が表示する。手順4の注意のとおり、Pages の Access policy を掛けていないもの）に、ログインなしで API を呼ぶ
+4. **Access を通っていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（デプロイごとに付く `https://<ハッシュ>.<プロジェクト名>.pages.dev`。デプロイしたときに wrangler が表示する。手順4-2 のとおり、ワイルドカードを外したので Access が掛かっていないもの）に、ログインなしで API を呼ぶ
 
 ```sh
 curl -i 'https://<ハッシュ>.<プロジェクト名>.pages.dev/api/meals'
@@ -188,8 +194,6 @@ curl -i 'https://<ハッシュ>.<プロジェクト名>.pages.dev/api/meals'
    - `500`（`AuthConfigurationError`）: 手順5の環境変数がない、または入れた後にデプロイしていない
    - `200`: **危険**。`DEV_USER_EMAIL` が設定されている。すぐに手順6で消して、もう一度デプロイする
    - 本番のアドレス（Access が掛かっている）を、ログインなしで `curl` すると、API より前に Access がログインの画面への転送（302）や 403 を返します。これも、守られている印です
-
-   確かめたら、Pages の「Access policy」を有効にして、プレビューのアドレスも守る。
 
 5. **ログインの期限切れ**: Session Duration が過ぎた後に操作すると、画面に「ログインの期限が切れました。ページを読み込み直してください」と出る。読み込み直すとログインの画面になる（正しい動作）
 
