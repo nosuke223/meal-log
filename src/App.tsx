@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CalendarScreen } from './calendar/CalendarScreen'
-import { createLocalStorageMealRepository } from './meals/localStorageMealRepository'
+import { createDefaultMealRepository } from './meals/defaultMealRepository'
 import type { MealRepository } from './meals/mealRepository'
 import { DataScreen } from './data/DataScreen'
 import { calendarDateHash, calendarHash, dataHash, dayHash, parseHash, todayHash } from './route'
@@ -8,7 +8,7 @@ import { DayScreen } from './today/DayScreen'
 import { useToday } from './useToday'
 
 type Props = {
-  /** 保存の窓口。省略するとブラウザ内（localStorage）に保存する */
+  /** 保存の窓口。省略するとサーバーの API に保存する */
   repository?: MealRepository
   /** 今日として扱う日（YYYY-MM-DD）。省略すると端末の現地の今日 */
   today?: string
@@ -19,7 +19,7 @@ function messageOf(error: unknown): string {
 }
 
 function App({ repository, today: fixedToday }: Props) {
-  const [mealRepository] = useState(() => repository ?? createLocalStorageMealRepository())
+  const [mealRepository] = useState(() => repository ?? createDefaultMealRepository())
   const today = useToday(fixedToday)
   const [hash, setHash] = useState(() => window.location.hash)
   // 日が過ぎた予定を「食べた」にしたら上げて、画面に読み直させる
