@@ -1,22 +1,11 @@
 import { readFile } from 'node:fs/promises'
-import { expect, test, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { expect, test, type MealApi, type StoredRecord } from './fixtures'
 
 // スマホの縦画面の大きさ。今日を 2026年11月18日（水）に固定する
 test.use({ viewport: { width: 375, height: 667 }, timezoneId: 'Asia/Tokyo' })
 
 const NOW = new Date('2026-11-18T10:00:00+09:00')
-
-type StoredRecord = {
-  id: string
-  date: string
-  mealType: string
-  name: string
-  genre: string | null
-  dishType: string | null
-  status: string
-  createdAt: string
-  updatedAt: string
-}
 
 function record(overrides: Partial<StoredRecord> & { id: string }): StoredRecord {
   return {
@@ -32,18 +21,10 @@ function record(overrides: Partial<StoredRecord> & { id: string }): StoredRecord
   }
 }
 
-async function storedRecords(page: Page): Promise<StoredRecord[]> {
-  const raw = await page.evaluate<string | null>(`window.localStorage.getItem('meal-log:meals')`)
-  return (JSON.parse(raw ?? '{"records":[]}') as { records: StoredRecord[] }).records
-}
-
-async function openWith(page: Page, records: StoredRecord[], hash = '') {
+async function openWith(page: Page, api: MealApi, records: StoredRecord[], hash = '') {
   await page.clock.setFixedTime(NOW)
-  await page.goto('/')
-  const data = JSON.stringify({ version: 1, records })
-  await page.evaluate(`window.localStorage.setItem('meal-log:meals', ${JSON.stringify(data)})`)
+  await api.seed(records)
   await page.goto(`/${hash}`)
-  await page.reload()
 }
 
 async function expectNoHorizontalScroll(page: Page) {
@@ -72,8 +53,8 @@ const SAMPLE = [
   record({ id: 'c', date: '2026-11-25', mealType: 'dinner', name: '鍋', genre: null, dishType: null, status: 'planned' }),
 ]
 
-test('「データ」ボタンでデータ画面が開き、読み込み直しても開き、「戻る」で前の画面に戻れる', async ({ page }) => {
-  await openWith(page, [], '#/day/2026-11-10')
+test('「データ」ボタンでデータ画面が開き、読み込み直しても開き、「戻る」で前の画面に戻れる', async ({ page, api }) => {
+  await openWith(page, api,[], '#/day/2026-11-10')
   await page.getByRole('button', { name: 'データ' }).click()
   await expect(page).toHaveURL(/#\/data$/)
   await expect(page.getByRole('heading', { name: 'データ' })).toBeVisible()
@@ -91,9 +72,9 @@ test('「データ」ボタンでデータ画面が開き、読み込み直し�
   await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
 })
 
-test('書き出したファイルを、空の状態で読み込むと、すべての記録が元のとおりに戻る', async ({ page }) => {
-  await openWith(page, SAMPLE, '#/data')
-  const original = await storedRecords(page)
+test('書き出したファイルを、空の状態で読み込むと、すべての記録が元のとおりに戻る', async ({ page, api }) => {
+  await openWith(page, api,SAMPLE, '#/data')
+  const original = await api.records()
 
   // 書き出し
   const downloading = page.waitForEvent('download')
@@ -110,8 +91,8 @@ test('書き出したファイルを、空の状態で読み込むと、すべ�
   )
   await expect(page.getByRole('status')).toHaveText('3件の記録を書き出しました')
 
-  // 空にして読み込む
-  await page.evaluate(`window.localStorage.removeItem('meal-log:meals')`)
+  // サーバーの記録を空にして読み込む
+  await api.clear()
   await page.reload()
   await chooseFile(page, path)
   const confirm = page.getByRole('group', { name: '取り込みの確認' })
@@ -119,7 +100,7 @@ test('書き出したファイルを、空の状態で読み込むと、すべ�
   await expectNoHorizontalScroll(page)
   await confirm.getByRole('button', { name: '取り込む' }).click()
   await expect(page.getByRole('status')).toHaveText('取り込みました: 追加 3件、更新 0件、変更なし 0件')
-  expect(new Map((await storedRecords(page)).map((item) => [item.id, item]))).toEqual(
+  expect(new Map((await api.records()).map((item) => [item.id, item]))).toEqual(
     new Map(original.map((item) => [item.id, item])),
   )
 
@@ -131,7 +112,7 @@ test('書き出したファイルを、空の状態で読み込むと、すべ�
   await expect(page.getByRole('table').getByRole('button', { name: '11月25日 予定あり', exact: true })).toBeVisible()
 })
 
-test('今あるデータと混ぜて読み込むと、件数を確認でき、取り消すと何も変わらない', async ({ page }) => {
+test('今あるデータと混ぜて読み込むと、件数を確認でき、取り消すと何も変わらない', async ({ page, api }) => {
   const existing = [
     record({ id: 'a', name: '今の焼き魚', updatedAt: '2026-11-02T00:00:00.000Z' }),
     record({ id: 'b', name: '今のうどん', updatedAt: '2026-11-02T00:00:00.000Z' }),
@@ -146,19 +127,19 @@ test('今あるデータと混ぜて読み込むと、件数を確認でき、�
       record({ id: 'new', date: '2026-11-20', name: '未来の食べた', status: 'eaten' }),
     ],
   }
-  await openWith(page, existing, '#/data')
+  await openWith(page, api,existing, '#/data')
 
   await chooseFile(page, jsonFile(file))
   const confirm = page.getByRole('group', { name: '取り込みの確認' })
   await expect(confirm).toContainText('追加 1件、更新 1件、変更なし 1件')
   await confirm.getByRole('button', { name: '取り消す' }).click()
   await expect(confirm).toHaveCount(0)
-  expect(await storedRecords(page)).toEqual(existing)
+  expect(await api.records()).toEqual(existing)
 
   await chooseFile(page, jsonFile(file))
   await page.getByRole('button', { name: '取り込む' }).click()
   await expect(page.getByRole('status')).toHaveText('取り込みました: 追加 1件、更新 1件、変更なし 1件')
-  const byId = new Map((await storedRecords(page)).map((item) => [item.id, item]))
+  const byId = new Map((await api.records()).map((item) => [item.id, item]))
   expect(byId.get('a')?.name).toBe('新しい焼き魚')
   expect(byId.get('b')?.name).toBe('今のうどん')
   expect(byId.get('kept')).toEqual(existing[2])
@@ -166,9 +147,9 @@ test('今あるデータと混ぜて読み込むと、件数を確認でき、�
   expect(byId.get('new')).toEqual({ ...file.records[2], status: 'planned' })
 })
 
-test('不正なファイルは、何も取り込まず、わかる文言でエラーを表示する', async ({ page }) => {
-  await openWith(page, SAMPLE, '#/data')
-  const original = await storedRecords(page)
+test('不正なファイルは、何も取り込まず、わかる文言でエラーを表示する', async ({ page, api }) => {
+  await openWith(page, api,SAMPLE, '#/data')
+  const original = await api.records()
   const cases: [unknown, string][] = [
     ['not json', 'JSON として読めません'],
     [{ version: 2, records: [] }, 'バージョンに対応していません'],
@@ -184,12 +165,12 @@ test('不正なファイルは、何も取り込まず、わかる文言でエ�
     await expect(page.getByRole('group', { name: '取り込みの確認' })).toHaveCount(0)
   }
   await expectNoHorizontalScroll(page)
-  expect(await storedRecords(page)).toEqual(original)
+  expect(await api.records()).toEqual(original)
 })
 
-test('パソコンの画面の大きさでも、データ画面が崩れない', async ({ page }) => {
+test('パソコンの画面の大きさでも、データ画面が崩れない', async ({ page, api }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
-  await openWith(page, SAMPLE, '#/data')
+  await openWith(page, api,SAMPLE, '#/data')
   await chooseFile(page, jsonFile({ version: 1, records: SAMPLE }))
   await expect(page.getByRole('group', { name: '取り込みの確認' })).toContainText('変更なし 3件')
   await expectNoHorizontalScroll(page)

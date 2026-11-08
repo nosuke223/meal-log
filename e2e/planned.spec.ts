@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { expect, test, type MealApi, type StoredRecord } from './fixtures'
 
 // スマホの縦画面の大きさ。今日を 2026年11月18日（水）に固定する
 test.use({ viewport: { width: 375, height: 667 }, timezoneId: 'Asia/Tokyo' })
@@ -9,21 +10,13 @@ type Seed = { id: string; date: string; mealType: string; name: string; genre: s
 
 const OLD_TIMESTAMP = '2026-11-01T00:00:00.000Z'
 
-function storedData(seeds: Seed[]): string {
-  const records = seeds.map((seed) => ({
+function recordsOf(seeds: Seed[]): StoredRecord[] {
+  return seeds.map((seed) => ({
     dishType: null,
     createdAt: OLD_TIMESTAMP,
     updatedAt: OLD_TIMESTAMP,
     ...seed,
   }))
-  return JSON.stringify({ version: 1, records })
-}
-
-type StoredRecord = Seed & { updatedAt: string }
-
-async function storedRecords(page: Page): Promise<StoredRecord[]> {
-  const raw = await page.evaluate<string | null>(`window.localStorage.getItem('meal-log:meals')`)
-  return (JSON.parse(raw ?? '{"records":[]}') as { records: StoredRecord[] }).records
 }
 
 function section(page: Page, name: string) {
@@ -48,16 +41,14 @@ async function expectNoHorizontalScroll(page: Page) {
   expect(overflow).toBeLessThanOrEqual(0)
 }
 
-async function openWith(page: Page, seeds: Seed[], hash = '') {
+async function openWith(page: Page, api: MealApi, seeds: Seed[], hash = '') {
   await page.clock.setFixedTime(NOW)
-  await page.goto('/')
-  await page.evaluate(`window.localStorage.setItem('meal-log:meals', ${JSON.stringify(storedData(seeds))})`)
+  await api.seed(recordsOf(seeds))
   await page.goto(`/${hash}`)
-  await page.reload()
 }
 
-test('今日に追加した品は「予定」になり、1回のタップで「食べた」と切り替えられる', async ({ page }) => {
-  await openWith(page, [])
+test('今日に追加した品は「予定」になり、1回のタップで「食べた」と切り替えられる', async ({ page, api }) => {
+  await openWith(page, api,[])
   await addItem(page, '朝', 'ごはん')
   const morning = section(page, '朝')
   const item = morning.getByRole('button', { name: /ごはん/ })
@@ -73,11 +64,11 @@ test('今日に追加した品は「予定」になり、1回のタップで「�
   await expect(section(page, '朝').getByRole('button', { name: /ごはん/ })).toContainText('食べた')
   await section(page, '朝').getByRole('button', { name: '予定に戻す' }).click()
   await expect(section(page, '朝').getByRole('button', { name: /ごはん/ })).toContainText('予定')
-  expect((await storedRecords(page)).map((record) => record.status)).toEqual(['planned'])
+  expect((await api.records()).map((record) => record.status)).toEqual(['planned'])
 })
 
-test('過去の日に追加した品は「食べた」になり、切り替えのボタンがない', async ({ page }) => {
-  await openWith(page, [], '#/day/2026-11-10')
+test('過去の日に追加した品は「食べた」になり、切り替えのボタンがない', async ({ page, api }) => {
+  await openWith(page, api,[], '#/day/2026-11-10')
   await addItem(page, '昼', 'うどん')
   const lunch = section(page, '昼')
   await expect(lunch.getByRole('button', { name: /うどん/ })).toContainText('食べた')
@@ -85,8 +76,8 @@ test('過去の日に追加した品は「食べた」になり、切り替え�
   await expect(lunch.getByRole('button', { name: '予定に戻す' })).toHaveCount(0)
 })
 
-test('カレンダーで明日以降の日を選び、予定を追加・変更・削除でき、予定の印が付く', async ({ page }) => {
-  await openWith(page, [], '#/calendar/2026-11')
+test('カレンダーで明日以降の日を選び、予定を追加・変更・削除でき、予定の印が付く', async ({ page, api }) => {
+  await openWith(page, api,[], '#/calendar/2026-11')
   await page.getByRole('button', { name: '次の月' }).click()
   await day(page, '12月24日').click()
   await expect(page.getByRole('region', { name: '選んだ日の品' })).toContainText('記録はありません')
@@ -129,8 +120,8 @@ test('カレンダーで明日以降の日を選び、予定を追加・変更�
   await expectNoHorizontalScroll(page)
 })
 
-test('今日の予定は予定の印だけで、「食べた」にするとジャンルの点に変わる', async ({ page }) => {
-  await openWith(page, [
+test('今日の予定は予定の印だけで、「食べた」にするとジャンルの点に変わる', async ({ page, api }) => {
+  await openWith(page, api,[
     { id: 'a', date: '2026-11-18', mealType: 'dinner', name: '麻婆豆腐', genre: 'chinese', status: 'planned' },
   ])
   await page.getByRole('button', { name: 'カレンダー' }).click()
@@ -143,8 +134,8 @@ test('今日の予定は予定の印だけで、「食べた」にするとジ�
   await expect(day(page, '11月18日 中')).toHaveText('18中')
 })
 
-test('品の日付を変えると、未来の日では「予定」、過去の日では「食べた」になる', async ({ page }) => {
-  await openWith(page, [
+test('品の日付を変えると、未来の日では「予定」、過去の日では「食べた」になる', async ({ page, api }) => {
+  await openWith(page, api,[
     { id: 'a', date: '2026-11-18', mealType: 'lunch', name: 'うどん', genre: 'japanese', status: 'eaten' },
     { id: 'b', date: '2026-11-18', mealType: 'dinner', name: 'カレー', genre: null, status: 'planned' },
   ])
@@ -173,15 +164,15 @@ test('品の日付を変えると、未来の日では「予定」、過去の�
   await expect(day(page, '11月15日 未設定')).toBeVisible()
 })
 
-test('アプリを開いたとき、保存されている過去の日の「予定」が「食べた」になる（更新日時も変わる）', async ({ page }) => {
-  await openWith(page, [
+test('アプリを開いたとき、保存されている過去の日の「予定」が「食べた」になる（更新日時も変わる）', async ({ page, api }) => {
+  await openWith(page, api,[
     { id: 'past', date: '2026-11-17', mealType: 'dinner', name: '焼き魚', genre: 'japanese', status: 'planned' },
     { id: 'today', date: '2026-11-18', mealType: 'breakfast', name: 'パン', genre: 'western', status: 'planned' },
   ])
   await expect(page.getByText('2026年11月18日（水）')).toBeVisible()
-  await expect.poll(async () => (await storedRecords(page)).find((record) => record.id === 'past')?.status).toBe('eaten')
+  await expect.poll(async () => (await api.records()).find((record) => record.id === 'past')?.status).toBe('eaten')
 
-  const byId = new Map((await storedRecords(page)).map((record) => [record.id, record]))
+  const byId = new Map((await api.records()).map((record) => [record.id, record]))
   expect(byId.get('past')?.updatedAt).not.toBe(OLD_TIMESTAMP)
   expect(byId.get('today')).toMatchObject({ status: 'planned', updatedAt: OLD_TIMESTAMP })
 
@@ -190,9 +181,9 @@ test('アプリを開いたとき、保存されている過去の日の「予�
   await expect(day(page, '11月18日 予定あり')).toBeVisible()
 })
 
-test('パソコンの画面の大きさでも、予定の品と編集の画面が崩れない', async ({ page }) => {
+test('パソコンの画面の大きさでも、予定の品と編集の画面が崩れない', async ({ page, api }) => {
   await page.setViewportSize({ width: 1280, height: 800 })
-  await openWith(page, [
+  await openWith(page, api,[
     { id: 'a', date: '2026-11-18', mealType: 'lunch', name: 'うどん', genre: 'japanese', status: 'planned' },
   ])
   await expect(section(page, '昼').getByRole('button', { name: '食べたにする' })).toBeVisible()

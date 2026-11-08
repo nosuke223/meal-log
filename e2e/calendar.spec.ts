@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { expect, test, type StoredRecord } from './fixtures'
 
 // スマホの縦画面の大きさ。今日を 2026年11月18日（水）に固定する
 test.use({ viewport: { width: 375, height: 667 }, timezoneId: 'Asia/Tokyo' })
@@ -16,15 +17,14 @@ const SEEDS: Seed[] = [
   { date: '2026-10-31', mealType: 'lunch', name: 'ピザ', genre: 'western', status: 'eaten' },
 ]
 
-function storedData(seeds: Seed[]): string {
-  const records = seeds.map((seed, index) => ({
-    id: `seed-${index}`,
+function recordsOf(seeds: Seed[], prefix = 'seed'): StoredRecord[] {
+  return seeds.map((seed, index) => ({
+    id: `${prefix}-${index}`,
     dishType: null,
     createdAt: '2026-11-01T00:00:00.000Z',
     updatedAt: '2026-11-01T00:00:00.000Z',
     ...seed,
   }))
-  return JSON.stringify({ version: 1, records })
 }
 
 function calendar(page: Page) {
@@ -51,11 +51,10 @@ async function expectNoHorizontalScroll(page: Page) {
   expect(overflow).toBeLessThanOrEqual(0)
 }
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, api }) => {
   await page.clock.setFixedTime(NOW)
+  await api.seed(recordsOf(SEEDS))
   await page.goto('/')
-  await page.evaluate(`window.localStorage.setItem('meal-log:meals', ${JSON.stringify(storedData(SEEDS))})`)
-  await page.reload()
 })
 
 test('最初は今日の記録の画面で、ボタンでカレンダーを開き、月を移れる', async ({ page }) => {
@@ -119,15 +118,11 @@ test('日のマスをタップすると、画面を移らずにその日の品�
   await expect(list.getByRole('heading', { name: '2026年11月4日（水）' })).toBeVisible()
 })
 
-test('日が過ぎた予定は、一覧でも「食べた」になる。明日以降の予定は「予定」のまま', async ({ page }) => {
+test('日が過ぎた予定は、一覧でも「食べた」になる。明日以降の予定は「予定」のまま', async ({ page, api }) => {
   await page.goto('/#/calendar/2026-11-05')
   await expect(preview(page).getByRole('listitem')).toHaveText(['✓食べたパスタ洋'])
 
-  await page.evaluate(
-    `window.localStorage.setItem('meal-log:meals', ${JSON.stringify(
-      storedData([{ date: '2026-11-20', mealType: 'dinner', name: '鍋', genre: 'japanese', status: 'planned' }]),
-    )})`,
-  )
+  await api.seed(recordsOf([{ date: '2026-11-20', mealType: 'dinner', name: '鍋', genre: 'japanese', status: 'planned' }], 'later'))
   await page.goto('/#/calendar/2026-11-20')
   await page.reload()
   await expect(preview(page).getByRole('listitem')).toHaveText(['○予定鍋和'])

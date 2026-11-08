@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { expect, test } from './fixtures'
 
 // スマホの縦画面の大きさ
 test.use({ viewport: { width: 375, height: 667 } })
@@ -21,10 +22,9 @@ async function expectNoHorizontalScroll(page: Page) {
   expect(overflow).toBeLessThanOrEqual(0)
 }
 
+// 記録は、テストごとに別の人（fixtures.ts）のものなので、空の状態から始まる
 test.beforeEach(async ({ page }) => {
   await page.goto('/')
-  await page.evaluate('window.localStorage.clear()')
-  await page.reload()
 })
 
 test('今日の日付と4つの欄が表示される', async ({ page }) => {
@@ -131,14 +131,57 @@ test('品を変更すると変更先の欄に移り、削除は確認で取り�
   await expect(lunch.getByText('おにぎり')).toHaveCount(0)
 })
 
-test('保存データが壊れているとき、エラーが表示され、データは上書きされない', async ({ page }) => {
-  await page.evaluate(`window.localStorage.setItem('meal-log:meals', '{broken')`)
-  await page.reload()
-  await expect(page.getByRole('alert')).toContainText('保存データが壊れています')
+test('通信に失敗したとき、エラーが表示され、記録は消えない', async ({ page, api }) => {
+  await addItem(page, '朝', 'ごはん')
+  const saved = await api.records()
 
+  await page.route('**/api/**', (route) => route.abort('internetdisconnected'))
   const morning = section(page, '朝')
-  await morning.getByRole('textbox', { name: '新しい品名' }).fill('ごはん')
+  await morning.getByRole('textbox', { name: '新しい品名' }).fill('パン')
   await morning.getByRole('button', { name: '追加', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText('保存できませんでした')
-  expect(await page.evaluate(`window.localStorage.getItem('meal-log:meals')`)).toBe('{broken')
+  await expect(page.getByRole('alert').filter({ hasText: '保存できませんでした' })).toContainText(
+    'サーバーに接続できませんでした',
+  )
+  // 入力した品名は残る
+  await expect(morning.getByRole('textbox', { name: '新しい品名' })).toHaveValue('パン')
+
+  await page.reload()
+  await expect(page.getByRole('alert').filter({ hasText: '記録を読み込めませんでした' })).toContainText(
+    'サーバーに接続できませんでした',
+  )
+
+  await page.unroute('**/api/**')
+  await page.reload()
+  await expect(section(page, '朝').getByRole('button', { name: /ごはん/ })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  expect(await api.records()).toEqual(saved)
+})
+
+test('ログインの期限が切れたとき（401、ログイン画面への転送）、読み込み直しを促すエラーが表示され、記録は消えない', async ({
+  page,
+  api,
+}) => {
+  await addItem(page, '朝', 'ごはん')
+  const saved = await api.records()
+
+  const expired = [
+    { status: 401, contentType: 'application/json', body: JSON.stringify({ error: { type: 'Unauthorized', message: '' } }) },
+    // Cloudflare Access は、ログインの期限が切れると、ログイン画面（別のオリジン）へ転送する
+    { status: 302, headers: { Location: 'https://meal-log.cloudflareaccess.com/cdn-cgi/access/login/meal-log' } },
+  ]
+  for (const response of expired) {
+    await page.route('**/api/**', (route) => route.fulfill(response))
+    const morning = section(page, '朝')
+    await morning.getByRole('button', { name: /ごはん/ }).click()
+    await morning.getByRole('form', { name: '品の変更' }).getByRole('textbox', { name: '品名' }).fill('おにぎり')
+    await morning.getByRole('form', { name: '品の変更' }).getByRole('button', { name: '保存' }).click()
+    await expect(page.getByRole('alert').filter({ hasText: '保存できませんでした' })).toContainText(
+      'ログインの期限が切れました。ページを読み込み直してください',
+    )
+
+    await page.unroute('**/api/**')
+    await page.reload()
+    await expect(section(page, '朝').getByRole('button', { name: /ごはん/ })).toBeVisible()
+    expect(await api.records()).toEqual(saved)
+  }
 })
