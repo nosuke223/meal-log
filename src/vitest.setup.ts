@@ -1,6 +1,13 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
-import { afterEach } from 'vitest'
+import { afterEach, vi } from 'vitest'
+
+// 画面のテストでは、アプリの保存の窓口を、サーバーの API ではなくブラウザ内（localStorage）の窓口に差し替える。
+// テストの中で localStorage に記録を入れたり、保存データを壊したりして、画面の動きを確かめる
+vi.mock('./meals/defaultMealRepository', async () => {
+  const { createLocalStorageMealRepository } = await import('./meals/localStorageMealRepository')
+  return { createDefaultMealRepository: () => createLocalStorageMealRepository() }
+})
 
 afterEach(() => {
   cleanup()

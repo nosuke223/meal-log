@@ -1,9 +1,11 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { devApiPlugin } from './server/devApi.ts'
 
 export default defineConfig({
-  plugins: [react()],
+  // devApiPlugin は開発サーバー（npm run dev）だけで、/api/ を手元の D1 につなぐ。ビルドには入らない
+  plugins: [react(), devApiPlugin()],
   test: {
     projects: [
       {
