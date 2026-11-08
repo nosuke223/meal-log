@@ -1,13 +1,15 @@
-import {
-  compareMealRecords,
-  isValidDate,
-  MealValidationError,
-  validateMealFields,
-  validateMealRecord,
-  type MealChanges,
-  type MealRecord,
-} from './mealRecord'
+import { compareMealRecords, validateMealFields, type MealRecord } from './mealRecord'
 import { MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
+import {
+  assertDate,
+  assertDateRange,
+  createdAtFor,
+  definedChanges,
+  nextTimestamp,
+  normalizeFields,
+  pickFields,
+  validateImportRecords,
+} from './repositoryRules'
 
 /** localStorage に保存するときのキー */
 export const MEAL_STORAGE_KEY = 'meal-log:meals'
@@ -72,11 +74,7 @@ export function createLocalStorageMealRepository(
     },
 
     async listByDateRange(from, to) {
-      assertDate(from)
-      assertDate(to)
-      if (from > to) {
-        throw new MealValidationError(`期間の始まりが終わりより後です: ${from} 〜 ${to}`)
-      }
+      assertDateRange(from, to)
       return sorted(load().filter((record) => from <= record.date && record.date <= to))
     },
 
@@ -100,7 +98,7 @@ export function createLocalStorageMealRepository(
           latest === null || Date.parse(existing.createdAt) > Date.parse(latest) ? existing.createdAt : latest,
         null,
       )
-      const timestamp = latestCreatedAt === null ? now().toISOString() : nextTimestamp(now(), latestCreatedAt)
+      const timestamp = createdAtFor(now(), latestCreatedAt)
       const record: MealRecord = {
         id: generateId(),
         ...fields,
@@ -159,67 +157,13 @@ export function createLocalStorageMealRepository(
 
     async importRecords(input) {
       // 書き込む前にすべて検査する（1件でも不正なら何も書き込まない）
-      const incoming = input.map((record, index) => {
-        try {
-          return validateMealRecord(record)
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error)
-          throw new MealValidationError(`${index + 1}件目の記録が不正です: ${reason}`)
-        }
-      })
-      const ids = new Set<string>()
-      for (const record of incoming) {
-        if (ids.has(record.id)) throw new MealValidationError(`ID が重なっています: ${record.id}`)
-        ids.add(record.id)
-      }
+      const incoming = validateImportRecords(input)
       const byId = new Map(load().map((record) => [record.id, record]))
       for (const record of incoming) byId.set(record.id, record)
       // 1回の書き込みで保存するので、失敗したときは保存データは元のまま
       if (incoming.length > 0) save([...byId.values()])
     },
   }
-}
-
-type MealFields = Omit<MealRecord, 'id' | 'createdAt' | 'updatedAt'>
-
-const FIELD_KEYS = ['date', 'mealType', 'name', 'genre', 'dishType', 'status'] as const
-
-function pickFields(record: MealRecord): MealFields {
-  return {
-    date: record.date,
-    mealType: record.mealType,
-    name: record.name,
-    genre: record.genre,
-    dishType: record.dishType,
-    status: record.status,
-  }
-}
-
-/** 更新の値のうち、記録の中身の項目で、undefined でないものだけを取り出す */
-function definedChanges(changes: MealChanges): Partial<MealFields> {
-  const result: Record<string, unknown> = {}
-  for (const key of FIELD_KEYS) {
-    if (changes[key] !== undefined) result[key] = changes[key]
-  }
-  return result as Partial<MealFields>
-}
-
-function normalizeFields(fields: MealFields): MealFields {
-  validateMealFields(fields)
-  return { ...fields, name: fields.name.trim() }
-}
-
-function assertDate(date: string): void {
-  if (!isValidDate(date)) {
-    throw new MealValidationError(`日付は YYYY-MM-DD の書式の実在する日にしてください: ${String(date)}`)
-  }
-}
-
-/** 日時が前の値と同じかそれより前にならないようにする（同じミリ秒に続けて作成・更新したとき用） */
-function nextTimestamp(current: Date, previous: string): string {
-  const previousTime = Date.parse(previous)
-  const time = Math.max(current.getTime(), previousTime + 1)
-  return new Date(time).toISOString()
 }
 
 function parseStoredData(raw: string): StoredData {

@@ -7,5 +7,8 @@ dist/
 playwright-report/
 test-results/
 
+# wrangler の手元の D1 などの保存先
+.wrangler/
+
 # エージェントの PR 本文やコメントの下書き
 .agent-tmp/
