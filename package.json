@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "npm run db:migrate:local && vite",
     "lint": "eslint .",
     "test": "vitest run",
     "build": "tsc -b && vite build",
