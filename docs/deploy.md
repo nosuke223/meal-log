@@ -125,12 +125,12 @@ npx wrangler pages deploy dist --project-name meal-log --branch main
 1. ダッシュボードの「Workers & Pages」→ `meal-log` →「Settings」→「General」→「Access policy」→「Enable access policy」を押す
 2. 案内に従って進む。Access のアプリケーションが自動で作られる
 
-作られるアプリケーションは、`*.<プロジェクト名>.pages.dev`（ワイルドカード）と `<プロジェクト名>.pages.dev` を対象にしています。このままだと、デプロイごとのプレビューのアドレスにも掛かります。
+初めて有効にしたときに作られるアプリケーションは、プレビュー用の `*.<プロジェクト名>.pages.dev`（ワイルドカード）だけを対象にしていて、本番の `<プロジェクト名>.pages.dev` は含まれません（この操作だけでは本番は守られません）。次の手順で、このホスト名を本番のものに書き換えます。
 
 ### 4-2. 対象を本番のアドレスだけにする
 
 1. ダッシュボードの「Zero Trust」→「Access」→「Applications」（名前や場所は画面の更新で変わることがあります）を開き、4-1 で作られたアプリケーション（名前は `<プロジェクト名>` など）を編集する
-2. 「Application domain」（Public hostname）から、ワイルドカードのもの（`*.<プロジェクト名>.pages.dev`）を削除し、`<プロジェクト名>.pages.dev` だけにする
+2. 「Application domain」（Public hostname）にある既存のホスト名（`*.<プロジェクト名>.pages.dev`）を編集する。「Subdomain」の欄の `*` だけを消して、ホスト名を `<プロジェクト名>.pages.dev` にする（ホスト名を削除してから作り直さない）。ほかにワイルドカードのホスト名が残っていたら削除し、本番の `<プロジェクト名>.pages.dev` だけにする
    - **Path は空にする**（サイト全体を守る。`/api` もこれで守られる）
 3. Session Duration: 好みの長さ（ログインの期限。切れると画面にエラーが出るので、読み込み直してログインし直す）
 4. 「Policies」を確認する。自動で作られたポリシーが、所有者だけを許可しているものにする
