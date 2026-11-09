@@ -60,3 +60,57 @@ test('別のブラウザで開いても、同じ記録が見え、変更も反�
     await stranger.context().close()
   }
 })
+
+/** タブや画面に戻ってきたときにブラウザが送るイベントを、画面に送る */
+async function returnToTab(page: Page, event: 'focus' | 'visibilitychange') {
+  await page.evaluate((name) => {
+    if (name === 'focus') window.dispatchEvent(new Event('focus'))
+    else document.dispatchEvent(new Event('visibilitychange'))
+  }, event)
+}
+
+test('開いたままの画面は、別のブラウザで変えた記録を、タブに戻ったときに読み込み直さずに表示する', async ({
+  page,
+  browser,
+  baseURL,
+  userEmail,
+}) => {
+  await page.goto('/')
+  const lunch = section(page, '昼')
+  await expect(lunch).toBeVisible()
+  // 入力の途中
+  await lunch.getByRole('textbox', { name: '新しい品名' }).fill('おにぎり')
+  await lunch.getByRole('group', { name: 'ジャンル' }).getByRole('button', { name: '和' }).click()
+
+  const other = await openInAnotherBrowser(browser, baseURL, userEmail)
+  try {
+    const otherLunch = section(other, '昼')
+    await otherLunch.getByRole('textbox', { name: '新しい品名' }).fill('そば')
+    await otherLunch.getByRole('button', { name: '追加', exact: true }).click()
+    await expect(otherLunch.getByRole('button', { name: /そば/ })).toBeVisible()
+
+    await returnToTab(page, 'visibilitychange')
+    await expect(lunch.getByRole('button', { name: /そば/ })).toBeVisible()
+    await expect(lunch.getByRole('textbox', { name: '新しい品名' })).toHaveValue('おにぎり')
+    await expect(lunch.getByRole('group', { name: 'ジャンル' }).getByRole('button', { name: '和' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    // カレンダーでも、別のブラウザで消した品は、タブに戻ると一覧から消える
+    await page.getByRole('button', { name: 'カレンダー' }).click()
+    const preview = page.getByRole('region', { name: '選んだ日の品' })
+    await expect(preview.getByText('そば')).toBeVisible()
+
+    await otherLunch.getByRole('button', { name: /そば/ }).click()
+    other.once('dialog', (dialog) => dialog.accept())
+    await otherLunch.getByRole('form', { name: '品の変更' }).getByRole('button', { name: '削除' }).click()
+    await expect(otherLunch.getByText('そば')).toHaveCount(0)
+
+    await returnToTab(page, 'focus')
+    await expect(preview.getByText('記録はありません')).toBeVisible()
+    await expect(preview.getByText('そば')).toHaveCount(0)
+  } finally {
+    await other.context().close()
+  }
+})
