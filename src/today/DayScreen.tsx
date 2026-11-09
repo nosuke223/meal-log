@@ -54,17 +54,24 @@ export function DayScreen({ repository, date, today, revision, autoUpdateError, 
     }
   }, [repository, date, revision])
 
-  /** 保存の操作を行い、一覧を読み直す。成功したら true */
+  /**
+   * 保存の操作を行い、一覧を読み直す。保存に成功したら true（読み直しの成否にかかわらない）。
+   * 読み直しだけ失敗したときは、一覧は前の表示のままにし、保存はできたことがわかるエラーを表示する
+   */
   async function run(action: () => Promise<unknown>): Promise<boolean> {
     try {
       await action()
-      setRecords(await repository.listByDate(date))
-      setError(null)
-      return true
     } catch (cause) {
       setError(`保存できませんでした: ${messageOf(cause)}`)
       return false
     }
+    try {
+      setRecords(await repository.listByDate(date))
+      setError(null)
+    } catch (cause) {
+      setError(`保存しました。一覧を読み込めませんでした: ${messageOf(cause)}`)
+    }
+    return true
   }
 
   function add(mealType: MealType, name: string, genre: Genre | null, dishType: DishType | null) {
