@@ -1,5 +1,6 @@
-import { DISH_TYPE_LABELS, formatDate, GENRE_LABELS, MEAL_TYPE_LABELS } from '../meals/labels'
+import { DISH_TYPE_LABELS, formatDate, MEAL_TYPE_LABELS } from '../meals/labels'
 import type { MealRecord } from '../meals/mealRecord'
+import { GenreTag } from '../today/GenreTag'
 import { StatusBadge } from '../today/StatusBadge'
 import { mealsOfDay } from './calendarMonth'
 
@@ -45,7 +46,7 @@ export function DayPreview({ date, records, onOpen }: Props) {
               <li key={record.id} className={`preview-item item-${record.status}`}>
                 <StatusBadge status={record.status} />
                 <span className="item-name">{record.name}</span>
-                {record.genre && <span className="tag">{GENRE_LABELS[record.genre]}</span>}
+                {record.genre && <GenreTag genre={record.genre} />}
                 {record.dishType && <span className="tag">{DISH_TYPE_LABELS[record.dishType]}</span>}
               </li>
             ))}
