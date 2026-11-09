@@ -10,5 +10,8 @@ test-results/
 # wrangler の手元の D1 などの保存先
 .wrangler/
 
+# 本番の D1 にマイグレーションを適用するための、所有者の手元の設定（docs/deploy.md）
+wrangler.migrate.jsonc
+
 # エージェントの PR 本文やコメントの下書き
 .agent-tmp/
