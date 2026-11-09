@@ -4,13 +4,71 @@
   box-sizing: border-box;
 }
 
+/*
+ * 色。端末の設定にかかわらず、いつも黒に近い画面にする（ブラウザが描く部品も暗くする）。
+ * 文字と背景の明るさの差は、どの組み合わせも 4.5:1 以上にする
+ */
+:root {
+  color-scheme: dark;
+
+  /* 背景: ページ、欄や一覧の枠、ボタンや入力欄 */
+  --color-bg: #121212;
+  --color-surface: #1e1e1e;
+  --color-control: #2a2a2a;
+  --color-border: #3a3a3a;
+  --color-control-border: #777;
+
+  /* 文字 */
+  --color-text: #ececec;
+  --color-text-muted: #a3a3a3;
+  --color-text-on-fill: #fff;
+  --color-text-on-genre: var(--color-bg);
+
+  /* 何か所かで使う青と赤 */
+  --color-blue-light: #60a5fa;
+  --color-blue-dark: #172554;
+  --color-red-light: #fca5a5;
+
+  /* 主なボタンと、選んだ選択肢 */
+  --color-primary: #2563eb;
+  /* 削除 */
+  --color-danger: var(--color-red-light);
+  /* 予定 */
+  --color-planned: #c4b5fd;
+  --color-planned-border: #a78bfa;
+  --color-planned-bg: #241c38;
+  /* 食べた */
+  --color-eaten: #047857;
+  /* 今日のマス */
+  --color-today-border: var(--color-blue-light);
+  --color-today-bg: var(--color-blue-dark);
+  /* 選んだ日のマス */
+  --color-selected-border: #fb923c;
+  --color-selected-bg: #431407;
+  /* お知らせ、エラー、取り込みの確認 */
+  --color-notice: #a7f3d0;
+  --color-notice-bg: #064e3b;
+  --color-error: var(--color-red-light);
+  --color-error-bg: #450a0a;
+  --color-confirm-border: var(--color-blue-light);
+  --color-confirm-bg: var(--color-blue-dark);
+
+  /* ジャンル（カレンダーの点と品の札で同じ色を使う） */
+  --color-genre-japanese: #f87171;
+  --color-genre-western: var(--color-blue-light);
+  --color-genre-chinese: #d4a017;
+  --color-genre-other: #34d399;
+  /* 料理の分類の札（色を付けず、ジャンルの札と見分ける） */
+  --color-dish-tag: #3f3f3f;
+}
+
 body {
   margin: 0;
   font-family: system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
   font-size: 16px;
   line-height: 1.5;
-  color: #222;
-  background: #fafafa;
+  color: var(--color-text);
+  background: var(--color-bg);
 }
 
 .screen {
@@ -43,8 +101,8 @@ h2 {
 .section {
   margin-bottom: 16px;
   padding: 12px;
-  background: #fff;
-  border: 1px solid #ddd;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
 }
 
@@ -68,9 +126,9 @@ h2 {
 
 /* 予定の品は、枠を点線にする（札の文字と記号でも区別する） */
 .item-planned .item-button {
-  background: #f5f3ff;
+  background: var(--color-planned-bg);
   border-style: dashed;
-  border-color: #6d28d9;
+  border-color: var(--color-planned-border);
 }
 
 .status {
@@ -83,15 +141,15 @@ h2 {
 }
 
 .status-planned {
-  color: #6d28d9;
-  background: #fff;
-  border: 1px dashed #6d28d9;
+  color: var(--color-planned);
+  background: var(--color-planned-bg);
+  border: 1px dashed var(--color-planned-border);
 }
 
 .status-eaten {
-  color: #fff;
-  background: #047857;
-  border: 1px solid #047857;
+  color: var(--color-text-on-fill);
+  background: var(--color-eaten);
+  border: 1px solid var(--color-eaten);
 }
 
 .toggle {
@@ -107,10 +165,17 @@ select,
   font: inherit;
 }
 
+button,
+select,
+.text-input,
+.date-input {
+  color: var(--color-text);
+  background: var(--color-control);
+}
+
 button {
   padding: 0 14px;
-  background: #fff;
-  border: 1px solid #888;
+  border: 1px solid var(--color-control-border);
   border-radius: 8px;
 }
 
@@ -119,14 +184,14 @@ button:disabled {
 }
 
 button.primary {
-  color: #fff;
-  background: #2563eb;
-  border-color: #2563eb;
+  color: var(--color-text-on-fill);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 button.danger {
-  color: #b91c1c;
-  border-color: #b91c1c;
+  color: var(--color-danger);
+  border-color: var(--color-danger);
 }
 
 .item-button {
@@ -143,18 +208,41 @@ button.danger {
   overflow-wrap: anywhere;
 }
 
+/* 料理の分類の札。色を付けず、ジャンルの札と見分ける */
 .tag {
   padding: 0 8px;
   font-size: 0.85rem;
-  background: #eee;
+  color: var(--color-text);
+  background: var(--color-dish-tag);
   border-radius: 999px;
+}
+
+/* ジャンルの札。カレンダーの点と同じ色にする（文字でも見分けられる） */
+.tag-genre {
+  color: var(--color-text-on-genre);
+}
+
+.tag-japanese {
+  background: var(--color-genre-japanese);
+}
+
+.tag-western {
+  background: var(--color-genre-western);
+}
+
+.tag-chinese {
+  background: var(--color-genre-chinese);
+}
+
+.tag-other {
+  background: var(--color-genre-other);
 }
 
 .text-input {
   flex: 1;
   min-width: 0;
   padding: 0 10px;
-  border: 1px solid #888;
+  border: 1px solid var(--color-control-border);
   border-radius: 8px;
 }
 
@@ -180,13 +268,13 @@ button.danger {
 .choices-legend {
   min-width: 5.5em;
   font-size: 0.85rem;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .choice[aria-pressed='true'] {
-  color: #fff;
-  background: #2563eb;
-  border-color: #2563eb;
+  color: var(--color-text-on-fill);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
 }
 
 .select-row {
@@ -200,7 +288,7 @@ button.danger {
   min-height: 44px;
   padding: 0 10px;
   font: inherit;
-  border: 1px solid #888;
+  border: 1px solid var(--color-control-border);
   border-radius: 8px;
 }
 
@@ -233,7 +321,7 @@ button.danger {
 .calendar th {
   font-size: 0.85rem;
   font-weight: normal;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .calendar td {
@@ -249,12 +337,12 @@ button.danger {
   width: 100%;
   min-height: 48px;
   padding: 2px;
-  border-color: #ccc;
+  border-color: var(--color-border);
 }
 
 .day[aria-current='date'] {
-  background: #dbeafe;
-  border: 2px solid #2563eb;
+  background: var(--color-today-bg);
+  border: 2px solid var(--color-today-border);
 }
 
 .day[aria-current='date'] .day-number {
@@ -263,18 +351,18 @@ button.danger {
 
 /* 選んだ日。今日の強調（青の枠と背景）と別に、橙の太い内側の枠で示す（今日を選んだときは両方が見える） */
 .day[aria-pressed='true'] {
-  box-shadow: inset 0 0 0 3px #c2410c;
+  box-shadow: inset 0 0 0 3px var(--color-selected-border);
 }
 
 .day[aria-pressed='true']:not([aria-current='date']) {
-  background: #ffedd5;
+  background: var(--color-selected-bg);
 }
 
 .day-preview {
   margin-top: 8px;
   padding: 8px 12px;
-  background: #fff;
-  border: 1px solid #ddd;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
 }
 
@@ -293,7 +381,7 @@ button.danger {
 
 .day-preview-note {
   margin: 4px 0 0;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 /* 区分の名前を左に、品を右に並べて、縦の長さを抑える */
@@ -303,14 +391,14 @@ button.danger {
   gap: 8px;
   padding-top: 6px;
   margin-top: 6px;
-  border-top: 1px solid #eee;
+  border-top: 1px solid var(--color-border);
 }
 
 .preview-group h3 {
   margin: 0;
   font-size: 0.9rem;
   line-height: 1.75;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .preview-items {
@@ -343,7 +431,7 @@ button.danger {
   flex: none;
   width: 8px;
   height: 8px;
-  border: 2px solid #6d28d9;
+  border: 2px solid var(--color-planned-border);
   transform: rotate(45deg);
 }
 
@@ -362,39 +450,40 @@ button.danger {
   height: 16px;
   font-size: 10px;
   line-height: 1;
-  color: #fff;
+  color: var(--color-text-on-genre);
   border-radius: 50%;
 }
 
 .mark-japanese {
-  background: #b91c1c;
+  background: var(--color-genre-japanese);
 }
 
 .mark-western {
-  background: #1d4ed8;
+  background: var(--color-genre-western);
   border-radius: 3px;
 }
 
 .mark-chinese {
-  background: #a16207;
+  background: var(--color-genre-chinese);
 }
 
 .mark-other {
-  background: #047857;
+  background: var(--color-genre-other);
   border-radius: 3px;
 }
 
+/* 未設定はジャンルではないので、色を付けず点線の枠にする */
 .mark-unset {
-  color: #444;
-  background: #fff;
-  border: 1px dashed #444;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 1px dashed var(--color-text-muted);
 }
 
 .legend {
   margin-top: 12px;
   padding: 12px;
-  background: #fff;
-  border: 1px solid #ddd;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-radius: 8px;
 }
 
@@ -416,7 +505,7 @@ button.danger {
 .legend-note {
   margin: 8px 0 0;
   font-size: 0.85rem;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .header-actions {
@@ -429,13 +518,13 @@ button.danger {
 .description {
   margin: 0 0 12px;
   font-size: 0.9rem;
-  color: #555;
+  color: var(--color-text-muted);
 }
 
 .confirm {
   padding: 12px;
-  background: #eff6ff;
-  border: 1px solid #2563eb;
+  background: var(--color-confirm-bg);
+  border: 1px solid var(--color-confirm-border);
   border-radius: 8px;
 }
 
@@ -460,16 +549,16 @@ button.danger {
 
 .notice {
   padding: 8px 12px;
-  color: #065f46;
-  background: #d1fae5;
+  color: var(--color-notice);
+  background: var(--color-notice-bg);
   border-radius: 8px;
   overflow-wrap: anywhere;
 }
 
 .error {
   padding: 8px 12px;
-  color: #b91c1c;
-  background: #fee2e2;
+  color: var(--color-error);
+  background: var(--color-error-bg);
   border-radius: 8px;
   overflow-wrap: anywhere;
 }

@@ -13,6 +13,7 @@ import {
 } from '../meals/mealRecord'
 import { canToggleStatus, statusForDate } from '../meals/mealStatus'
 import { ChoiceButtons } from './ChoiceButtons'
+import { GenreTag } from './GenreTag'
 import { StatusBadge } from './StatusBadge'
 
 type Props = {
@@ -42,7 +43,7 @@ export function MealItem({ record, today, onUpdate, onDelete }: Props) {
           <span className="item-name" id={nameId}>
             {record.name}
           </span>
-          {record.genre && <span className="tag">{GENRE_LABELS[record.genre]}</span>}
+          {record.genre && <GenreTag genre={record.genre} />}
           {record.dishType && <span className="tag">{DISH_TYPE_LABELS[record.dishType]}</span>}
         </button>
         {canToggleStatus(record.date, today) && (
