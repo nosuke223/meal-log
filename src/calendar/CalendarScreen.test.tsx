@@ -161,6 +161,27 @@ test('日が過ぎた予定が自動で「食べた」になると、一覧の�
   })
 })
 
+test('タブや画面に戻ってきたとき、ほかで変わった記録を読み直し、点・印・選んだ日の一覧が最新になる', async () => {
+  seed([{ id: 'udon', date: '2026-11-03', mealType: 'lunch', name: 'うどん', genre: 'japanese' }])
+  window.history.replaceState(null, '', '/#/calendar/2026-11-03')
+  render(<App today={TODAY} />)
+  expect(await calendar().findByRole('button', { name: '11月3日 和' })).toBeInTheDocument()
+  expect(preview().getByText('うどん')).toBeInTheDocument()
+
+  // 別の端末で、11月3日の「うどん」を消して「パスタ」を追加し、11月8日に予定を入れた
+  seed([
+    { id: 'pasta', date: '2026-11-03', mealType: 'lunch', name: 'パスタ', genre: 'western' },
+    { id: 'nabe', date: '2026-11-08', mealType: 'dinner', name: '鍋', status: 'planned' },
+  ])
+  act(() => {
+    window.dispatchEvent(new Event('focus'))
+  })
+  expect(await calendar().findByRole('button', { name: '11月3日 洋' })).toBeInTheDocument()
+  expect(calendar().getByRole('button', { name: '11月8日 予定あり' })).toBeInTheDocument()
+  expect(preview().getByText('パスタ')).toBeInTheDocument()
+  expect(preview().queryByText('うどん')).not.toBeInTheDocument()
+})
+
 test('前の月・次の月・今月のボタンで月を移る', () => {
   openCalendar()
   fireEvent.click(screen.getByRole('button', { name: '前の月' }))
