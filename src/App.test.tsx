@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import App from './App'
-import { MEAL_STORAGE_KEY } from './meals/localStorageMealRepository'
+import { MEAL_STORAGE_KEY, createLocalStorageMealRepository } from './meals/localStorageMealRepository'
+import { MealStorageError, type MealRepository } from './meals/mealRepository'
 
 const TODAY = '2026-11-06'
 
@@ -378,6 +379,150 @@ describe('日が過ぎた予定', () => {
     await vi.waitFor(() => {
       expect(storedRecords().map((record) => record.status)).toEqual(['eaten'])
     })
+  })
+})
+
+describe('保存の後の読み直しだけに失敗したとき', () => {
+  const RELOAD_ERROR = 'サーバーに接続できませんでした。通信の状態を確かめてください'
+
+  /**
+   * ブラウザ内の窓口を包んだ窓口を作る。failReloadAfterNextSave を呼ぶと、
+   * 次の保存の操作（追加・変更・削除）の直後の listByDate を1回だけ失敗させる
+   */
+  function setUpRepository() {
+    const inner = createLocalStorageMealRepository()
+    let armed = false
+    let failNextList = false
+    function afterSave<T>(result: Promise<T>): Promise<T> {
+      return result.then((value) => {
+        failNextList = armed
+        armed = false
+        return value
+      })
+    }
+    const repository: MealRepository = {
+      ...inner,
+      listByDate(date) {
+        if (failNextList) {
+          failNextList = false
+          return Promise.reject(new MealStorageError(RELOAD_ERROR))
+        }
+        return inner.listByDate(date)
+      },
+      create: (input) => afterSave(inner.create(input)),
+      update: (id, changes) => afterSave(inner.update(id, changes)),
+      delete: (id) => afterSave(inner.delete(id)),
+    }
+    return {
+      repository,
+      failReloadAfterNextSave() {
+        armed = true
+      },
+    }
+  }
+
+  async function expectSavedButNotReloaded() {
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(`保存しました。一覧を読み込めませんでした: ${RELOAD_ERROR}`)
+    })
+    expect(screen.queryByText(/保存できませんでした/)).not.toBeInTheDocument()
+  }
+
+  async function openEditForm(sectionName: string, name: string) {
+    fireEvent.click(await within(section(sectionName)).findByRole('button', { name: new RegExp(name) }))
+    return within(within(section(sectionName)).getByRole('form', { name: '品の変更' }))
+  }
+
+  test('追加: 保存できたことがわかるエラーを表示し、入力欄を空にする。次に読み直せたらエラーが消え、一覧が最新になる', async () => {
+    const { repository, failReloadAfterNextSave } = setUpRepository()
+    render(<App today={TODAY} repository={repository} />)
+    const lunch = within(section('昼'))
+
+    failReloadAfterNextSave()
+    fireEvent.change(lunch.getByRole('textbox', { name: '新しい品名' }), { target: { value: 'うどん' } })
+    fireEvent.click(lunch.getByRole('button', { name: '追加' }))
+    await expectSavedButNotReloaded()
+    expect(lunch.getByRole('textbox', { name: '新しい品名' })).toHaveValue('')
+    expect(storedRecords().map((record) => record.name)).toEqual(['うどん'])
+    // 一覧は前の表示のまま
+    expect(lunch.queryByRole('button', { name: /うどん/ })).not.toBeInTheDocument()
+
+    // 次の保存の後は読み直しに成功する
+    await addItem('昼', 'そば')
+    expect(lunch.getByRole('button', { name: /うどん/ })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(storedRecords().map((record) => record.name)).toEqual(['うどん', 'そば'])
+  })
+
+  test('変更: 保存できたことがわかるエラーを表示し、変更の欄を閉じる', async () => {
+    seed([{ id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' }])
+    const { repository, failReloadAfterNextSave } = setUpRepository()
+    render(<App today={TODAY} repository={repository} />)
+
+    const form = await openEditForm('朝', 'ごはん')
+    fireEvent.change(form.getByRole('textbox', { name: '品名' }), { target: { value: 'おにぎり' } })
+    failReloadAfterNextSave()
+    fireEvent.click(form.getByRole('button', { name: '保存' }))
+    await expectSavedButNotReloaded()
+    expect(within(section('朝')).queryByRole('form', { name: '品の変更' })).not.toBeInTheDocument()
+    expect(storedRecords().map((record) => record.name)).toEqual(['おにぎり'])
+  })
+
+  test('削除: 保存できたことがわかるエラーを表示し、変更の欄を閉じる', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    seed([{ id: 'a', date: TODAY, mealType: 'dinner', name: 'カレー', status: 'planned' }])
+    const { repository, failReloadAfterNextSave } = setUpRepository()
+    render(<App today={TODAY} repository={repository} />)
+
+    const form = await openEditForm('夜', 'カレー')
+    failReloadAfterNextSave()
+    fireEvent.click(form.getByRole('button', { name: '削除' }))
+    await expectSavedButNotReloaded()
+    expect(within(section('夜')).queryByRole('form', { name: '品の変更' })).not.toBeInTheDocument()
+    expect(storedRecords()).toEqual([])
+  })
+
+  test('予定と食べたの切り替え: 保存できたことがわかるエラーを表示する', async () => {
+    seed([{ id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' }])
+    const { repository, failReloadAfterNextSave } = setUpRepository()
+    render(<App today={TODAY} repository={repository} />)
+
+    const button = await within(section('朝')).findByRole('button', { name: '食べたにする' })
+    failReloadAfterNextSave()
+    fireEvent.click(button)
+    await expectSavedButNotReloaded()
+    expect(storedRecords().map((record) => record.status)).toEqual(['eaten'])
+  })
+
+  test('追加の保存そのものに失敗したときは、「保存できませんでした」と表示し、入力中の品名を残す', async () => {
+    const { repository } = setUpRepository()
+    vi.spyOn(repository, 'create').mockRejectedValueOnce(new MealStorageError(RELOAD_ERROR))
+    render(<App today={TODAY} repository={repository} />)
+    const lunch = within(section('昼'))
+    fireEvent.change(lunch.getByRole('textbox', { name: '新しい品名' }), { target: { value: 'うどん' } })
+    fireEvent.click(lunch.getByRole('button', { name: '追加' }))
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(`保存できませんでした: ${RELOAD_ERROR}`)
+    })
+    expect(lunch.getByRole('textbox', { name: '新しい品名' })).toHaveValue('うどん')
+    expect(storedRecords()).toEqual([])
+  })
+
+  test('変更の保存そのものに失敗したときは、「保存できませんでした」と表示し、変更の欄を残す', async () => {
+    seed([{ id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' }])
+    const { repository } = setUpRepository()
+    vi.spyOn(repository, 'update').mockRejectedValueOnce(new MealStorageError(RELOAD_ERROR))
+    render(<App today={TODAY} repository={repository} />)
+
+    const form = await openEditForm('朝', 'ごはん')
+    fireEvent.change(form.getByRole('textbox', { name: '品名' }), { target: { value: 'おにぎり' } })
+    fireEvent.click(form.getByRole('button', { name: '保存' }))
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(`保存できませんでした: ${RELOAD_ERROR}`)
+    })
+    expect(form.getByRole('textbox', { name: '品名' })).toHaveValue('おにぎり')
+    expect(storedRecords().map((record) => record.name)).toEqual(['ごはん'])
   })
 })
 
