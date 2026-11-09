@@ -594,6 +594,123 @@ describe('タブや画面に戻ってきたとき', () => {
   })
 })
 
+describe('戻ってきたときの読み直しに失敗したとき', () => {
+  const OFFLINE_ERROR = 'サーバーに接続できませんでした。通信の状態を確かめてください'
+
+  /** offline にすると、一覧の読み込みがすべて失敗する窓口 */
+  function setUpOfflineRepository() {
+    const inner = createLocalStorageMealRepository()
+    let offline = false
+    const repository: MealRepository = {
+      ...inner,
+      listByDate: (date) =>
+        offline ? Promise.reject(new MealStorageError(OFFLINE_ERROR)) : inner.listByDate(date),
+      listByDateRange: (from, to) =>
+        offline ? Promise.reject(new MealStorageError(OFFLINE_ERROR)) : inner.listByDateRange(from, to),
+    }
+    return {
+      repository,
+      setOffline(value: boolean) {
+        offline = value
+      },
+    }
+  }
+
+  function returnToTab() {
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+  }
+
+  test('記録の画面: エラーを表示し、一覧と変更の欄と入力を前のままにする。通信が戻ったらエラーが消え、最新になる', async () => {
+    seed([
+      { id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' },
+      { id: 'rice', date: TODAY, mealType: 'lunch', name: 'ごはん', status: 'planned' },
+    ])
+    const { repository, setOffline } = setUpOfflineRepository()
+    render(<App today={TODAY} repository={repository} />)
+    const lunch = within(section('昼'))
+    fireEvent.click(await lunch.findByRole('button', { name: /うどん/ }))
+    const form = within(lunch.getByRole('form', { name: '品の変更' }))
+    fireEvent.change(form.getByRole('textbox', { name: '品名' }), { target: { value: '肉うどん' } })
+
+    setOffline(true)
+    returnToTab()
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(`記録を読み込めませんでした: ${OFFLINE_ERROR}`)
+    })
+    expect(lunch.getByRole('button', { name: /ごはん/ })).toBeInTheDocument()
+    expect(form.getByRole('textbox', { name: '品名' })).toHaveValue('肉うどん')
+
+    setOffline(false)
+    seed([{ id: 'soba', date: TODAY, mealType: 'lunch', name: 'そば', status: 'planned' }])
+    returnToTab()
+    expect(await lunch.findByRole('button', { name: /そば/ })).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(lunch.queryByRole('button', { name: /ごはん/ })).not.toBeInTheDocument()
+  })
+
+  test('記録の画面: 日を移った最初の読み込みに失敗したときは、前の日の記録を出さない', async () => {
+    seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' }])
+    const { repository, setOffline } = setUpOfflineRepository()
+    window.history.replaceState(null, '', '/#/day/2026-11-06')
+    render(<App today={TODAY} repository={repository} />)
+    expect(await within(section('昼')).findByRole('button', { name: /うどん/ })).toBeInTheDocument()
+
+    setOffline(true)
+    window.history.replaceState(null, '', '/#/day/2026-11-05')
+    act(() => {
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+    })
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('記録を読み込めませんでした')
+    })
+    expect(within(section('昼')).queryByRole('button', { name: /うどん/ })).not.toBeInTheDocument()
+  })
+
+  test('カレンダー: エラーを表示し、点と選んだ日の一覧を前のままにする。通信が戻ったらエラーが消える', async () => {
+    seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'eaten' }])
+    const { repository, setOffline } = setUpOfflineRepository()
+    window.history.replaceState(null, '', '/#/calendar/2026-11-06')
+    render(<App today={TODAY} repository={repository} />)
+    expect(await screen.findByText('うどん')).toBeInTheDocument()
+    const dayButton = screen.getByRole('button', { name: /^11月6日 / })
+    const label = dayButton.getAttribute('aria-label')
+
+    setOffline(true)
+    returnToTab()
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(`記録を読み込めませんでした: ${OFFLINE_ERROR}`)
+    })
+    expect(screen.getByText('うどん')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^11月6日 / })).toHaveAttribute('aria-label', label)
+
+    setOffline(false)
+    seed([])
+    returnToTab()
+    await vi.waitFor(() => {
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+    expect(screen.queryByText('うどん')).not.toBeInTheDocument()
+  })
+
+  test('カレンダー: 月を移った最初の読み込みに失敗したときは、前の月の点を出さない', async () => {
+    seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'eaten' }])
+    const { repository, setOffline } = setUpOfflineRepository()
+    window.history.replaceState(null, '', '/#/calendar/2026-11')
+    render(<App today={TODAY} repository={repository} />)
+    expect(await screen.findByRole('button', { name: /^11月6日 .+/ })).toBeInTheDocument()
+
+    setOffline(true)
+    fireEvent.click(screen.getByRole('button', { name: '次の月' }))
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('記録を読み込めませんでした')
+    })
+    expect(screen.queryByRole('button', { name: /^12月6日 .+/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('table').querySelector('.mark')).toBeNull()
+  })
+})
+
 test('保存先へのアクセスが拒否される環境でも、画面を表示し、エラーを表示する', async () => {
   vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
     throw new DOMException('denied', 'SecurityError')
