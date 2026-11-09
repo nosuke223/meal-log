@@ -120,7 +120,10 @@ export function CalendarScreen({
       })
       .catch((cause: unknown) => {
         if (cancelled) return
-        setLoaded({ month, genres: new Map(), planned: new Set(), records: null })
+        // 同じ月の読み直しに失敗したときは、前の表示のままにする。月を移った最初の読み込みなら空にする
+        setLoaded((previous) =>
+          previous?.month === month ? previous : { month, genres: new Map(), planned: new Set(), records: null },
+        )
         setError(`記録を読み込めませんでした: ${messageOf(cause)}`)
       })
     return () => {

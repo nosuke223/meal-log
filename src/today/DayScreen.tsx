@@ -32,7 +32,9 @@ function messageOf(error: unknown): string {
 
 /** 1日分の記録の画面。追加・変更・削除ができる */
 export function DayScreen({ repository, date, today, revision, autoUpdateError, onOpenCalendar, onOpenData }: Props) {
-  const [records, setRecords] = useState<MealRecord[]>([])
+  // records は loaded.date の日の一覧（日を移った直後の失敗で、前の日の記録を残さないために日も持つ）
+  const [loaded, setLoaded] = useState<{ date: string | null; records: MealRecord[] }>({ date: null, records: [] })
+  const records = loaded.records
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -41,12 +43,13 @@ export function DayScreen({ repository, date, today, revision, autoUpdateError, 
       .listByDate(date)
       .then((list) => {
         if (cancelled) return
-        setRecords(list)
+        setLoaded({ date, records: list })
         setError(null)
       })
       .catch((cause: unknown) => {
         if (cancelled) return
-        setRecords([])
+        // 同じ日の読み直しに失敗したときは、一覧を前の表示のままにする。日を移った最初の読み込みなら空にする
+        setLoaded((previous) => (previous.date === date ? previous : { date, records: [] }))
         setError(`記録を読み込めませんでした: ${messageOf(cause)}`)
       })
     return () => {
@@ -66,7 +69,7 @@ export function DayScreen({ repository, date, today, revision, autoUpdateError, 
       return false
     }
     try {
-      setRecords(await repository.listByDate(date))
+      setLoaded({ date, records: await repository.listByDate(date) })
       setError(null)
     } catch (cause) {
       setError(`保存しました。一覧を読み込めませんでした: ${messageOf(cause)}`)
