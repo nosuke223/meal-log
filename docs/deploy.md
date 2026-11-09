@@ -1,6 +1,6 @@
 # Cloudflare への公開と Access の設定手順
 
-作った画面と API を Cloudflare Pages（画面と Pages Functions）と D1（データベース）に公開し、Cloudflare Access で所有者だけが開けるようにする手順です。上から順に行ってください。デプロイは手動です（GitHub からの自動デプロイは設定しません）。
+作った画面と API を Cloudflare Pages（画面と Pages Functions）と D1（データベース）に公開し、Cloudflare Access で所有者だけが開けるようにする手順です。上から順に行ってください。main にマージすると、Cloudflare が自動で本番にデプロイします（Cloudflare Pages を GitHub の `nosuke223/meal-log` につないであります）。表の変更（マイグレーション）だけは、手動で本番の D1 に適用します（手順2と「更新するとき」）。
 
 `<…>` の部分は、自分の値に置き換えます。値（ID、チーム名、AUD タグなど）はリポジトリに書かず、Cloudflare の画面と手元のメモにだけ残してください。
 
@@ -10,10 +10,10 @@
 | --- | --- | --- |
 | D1 のデータベース名 | 記録を入れるデータベース | `meal-log` |
 | Pages のプロジェクト名 | 公開するサイト | `meal-log` |
-| 実際の本番のアドレス | 手順3-2のデプロイ後に確かめる。`<プロジェクト名>.pages.dev` とは限らない（下の注意） | `<本番のホスト名>`（例: `meal-log-oqi.pages.dev`） |
+| 実際の本番のアドレス | 手順3-2の最初のデプロイ後に確かめる。`<プロジェクト名>.pages.dev` とは限らない（下の注意） | `<本番のホスト名>`（例: `meal-log-oqi.pages.dev`） |
 | 所有者のメールアドレス | Access で許可する人 | `<自分のメールアドレス>` |
 
-> **注意**: 「meal-log」の名前がすでに他で使われていると、アドレスに文字が付きます（例: `meal-log-oqi.pages.dev`）。実際の本番のアドレスは、手順3-2の `wrangler pages deploy` の出力（`https://<ハッシュ>.<サブドメイン>.pages.dev`）か、ダッシュボードの「Workers & Pages」→ `meal-log` で確かめます。手順4（Access で守るホスト名）と手順7では、この `<本番のホスト名>` を使います。
+> **注意**: 「meal-log」の名前がすでに他で使われていると、アドレスに文字が付きます（例: `meal-log-oqi.pages.dev`）。実際の本番のアドレスは、ダッシュボードの「Workers & Pages」→ `meal-log` で確かめます。手順4（Access で守るホスト名）と手順7では、この `<本番のホスト名>` を使います。
 
 アプリが読む環境変数とバインディングは次のとおりです（詳しくは README の「環境変数」）。
 
@@ -84,38 +84,41 @@ npx wrangler d1 execute DB --remote --config wrangler.migrate.jsonc --command "S
 
 > **注意**: 設定ファイルの名前を `wrangler.toml`、`wrangler.json`、`wrangler.jsonc` にしないでください。Pages は、この名前のファイルを本番の設定として読みます。手元用の `wrangler.dev.jsonc`（手元の D1 の設定）は、手元の確認専用なので、本番のデータベース ID を書き込まないでください。
 
-マイグレーションを増やしたときも、同じコマンドで本番に適用します（適用済みのものは飛ばされます）。
+マイグレーションを増やしたときも、同じコマンドで本番に適用します（適用済みのものは飛ばされます）。表の変更は自動では本番の D1 に適用されません。表を増やしたときは、**PR のマージの前に**適用します（理由と進め方は「更新するとき」）。
 
-## 3. Pages のプロジェクトを作って、最初のデプロイをする
+## 3. Pages のプロジェクトを GitHub につないで、最初のデプロイをする
 
-### 3-1. プロジェクトを作る
+### 3-1. プロジェクトを GitHub につなぐ
 
-手動のデプロイ（Direct Upload）で使うプロジェクトを作ります。
+ダッシュボードの「Workers & Pages」で、Pages のプロジェクトを作り、GitHub の `nosuke223/meal-log` につなぎます（プロジェクト名は `meal-log`）。手元からのアップロードで作ったプロジェクトを、後から GitHub 連携に切り替えられるかは確かめていません（未確認）。最初から GitHub 連携で作ります。
 
-```sh
-npx wrangler pages project create meal-log --production-branch main
-```
+画面の操作の細かい順序と名前は、Cloudflare の更新で変わります。つないだ後の状態は、次の 3-2 のとおりになっていることを確かめます。
 
-### 3-2. ビルドしてデプロイする
+### 3-2. ビルドの設定
+
+ダッシュボードの `meal-log` →「Settings」の Build で、次の値になっていることを確かめます（所有者が実際の画面で確かめた値）。
 
 | 項目 | 値 |
 | --- | --- |
-| ビルドのコマンド | `npm run build`（型検査と `vite build`） |
-| 出力先 | `dist` |
-| API（Pages Functions） | リポジトリ直下の `functions/`（`functions/api/[[path]].ts`）。`wrangler pages deploy` を、リポジトリのルートで実行すると、自動で含まれる |
+| Production branch | `main` |
+| Build command | `npm run build`（型検査と `vite build`） |
+| Build output | `dist` |
+| Root directory | 空（リポジトリのルート） |
+| Build watch paths | `*` |
+| Build system version | Version 3 |
+| Automatic deployments | 有効（Production） |
 
-```sh
-npm run build
-npx wrangler pages deploy dist --project-name meal-log --branch main
-```
+API（Pages Functions）は、リポジトリ直下の `functions/`（`functions/api/[[path]].ts`）が自動で含まれます。
 
-> **注意**: 必ずリポジトリのルートで実行してください。`functions/` はコマンドを実行した場所から探されるので、別の場所で実行すると API が入りません。
+> **注意**: Root directory は空（リポジトリのルート）のままにしてください。`functions/` はルートから探されるので、別のディレクトリにすると API が入りません。
 
-> **注意**: 手元の `npm run dev` と `npm run dev:api` が使う `DEV_USER_EMAIL` は、`dist/` にも `functions/` にも入っていません。入れないでください。
+> **注意**: 手元の `npm run dev` と `npm run dev:api` が使う `DEV_USER_EMAIL` は、`dist/` にも `functions/` にも入っていません。Cloudflare の環境変数にも入れないでください（手順6）。
 
-出力の `https://<ハッシュ>.<サブドメイン>.pages.dev` の `<サブドメイン>.pages.dev` の部分が、実際の本番のホスト名（`<本番のホスト名>`）です。控えます（ダッシュボードの「Workers & Pages」→ `meal-log` でも確かめられます）。
+つなぐと、最初のデプロイが走ります。以降は、main にマージするたびに、自動で本番にデプロイされます。ブランチごとのプレビューのデプロイも、PR のブランチ（`issue-…`）で自動で作られます（アドレスは `https://<ハッシュ>.<サブドメイン>.pages.dev`。ダッシュボードの「Deployments」の一覧に出ます）。
 
-この時点では環境変数がないので、API は 500（`AuthConfigurationError`）を返します。手順3-3から5で設定した後に、もう一度デプロイします。
+実際の本番のホスト名（`<本番のホスト名>`）は、ダッシュボードの「Workers & Pages」→ `meal-log` で確かめて、控えます。
+
+この時点では環境変数がないので、API は 500（`AuthConfigurationError`）を返します。手順3-3から5で設定した後に、再デプロイします（再デプロイの方法は手順5）。
 
 ### 3-3. D1 をつなぐ（バインディング）
 
@@ -124,7 +127,7 @@ npx wrangler pages deploy dist --project-name meal-log --branch main
 - Variable name: `DB`（この名前は変えない。コードが `env.DB` を読む）
 - D1 database: 手順1で作った `meal-log`
 
-「Production」の環境に設定します。確認のためのプレビューの環境でも使うなら、「Preview」にも同じ設定をします（Preview は、本番と同じデータベースを指すと本番の記録を読み書きするので、使わないなら設定しなくてよい）。
+「Production」の環境にだけ設定します。「Preview」には設定しません（Preview に同じデータベースを指すと、プレビューのデプロイが本番の記録を読み書きしてしまうため）。そのため、プレビューのデプロイには `DB` の接続も手順5の環境変数もなく、Access も掛かっていないので、記録は読み書きできません（API は 401 か 500 になります。手順7-4）。
 
 ### 3-4. 環境変数
 
@@ -157,7 +160,7 @@ npx wrangler pages deploy dist --project-name meal-log --branch main
 
 > **注意（失敗しやすい所）: Access で `/api` も守ること。** Path を空にしてサイト全体を守れば、`/api` も同じアプリケーションに入ります。「`/` だけ」「画面のパスだけ」のように Path を決めると、`/api` が守られず、Access を通らない API の呼び出しになります（API も JWT を検証するので 401 になりますが、守りは二重にしておく）。別のアプリケーションに分けるときは、`/api` にも同じ許可の Policy を付けてください。
 
-> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<サブドメイン>.pages.dev`）は、別のホスト名です。** 4-2 でワイルドカードを外すと、プレビューのアドレスには Access が掛からなくなります。手順7の「Access を通っていないときに 401 が返る」の確認では、この掛かっていないアドレスを使います。プレビューにも記録の API が公開されるのを避けたいときは、手順3-3 のとおり「Preview」に `DB` のバインディングと手順5の環境変数を設定しないでおきます。そうすれば、プレビューの API は記録を読み書きできません。
+> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<サブドメイン>.pages.dev`）は、別のホスト名です。** 4-2 でワイルドカードを外すと、プレビューのアドレスには Access が掛からなくなります。手順7の「Access を通っていないときに 401 が返る」の確認では、この掛かっていないアドレスを使います。プレビューにも記録の API が公開されるのを避けるため、手順3-3 のとおり「Preview」に `DB` のバインディングと手順5の環境変数を設定しないでおきます。そうすれば、プレビューの API は記録を読み書きできません（401 か 500 になります）。
 
 Zero Trust の **チーム名** は、Zero Trust の **Overview** の「Account details」にある **Team domain**（`<チーム名>.cloudflareaccess.com`）の `<チーム名>` の部分です。控えます。その下の「Team name」は表示名なので、環境変数には使いません。
 
@@ -185,18 +188,13 @@ npx wrangler pages secret list --project-name meal-log
 
 > **注意**: ダッシュボードの「Variables and secrets」に同じ名前の変数がすでにあるときは、先に削除してからコマンドで入れてください。
 
-> **注意**: 環境変数の変更は、次のデプロイから効きます。設定したら、手順3-2のコマンドでもう一度デプロイしてください。
-
-```sh
-npm run build
-npx wrangler pages deploy dist --project-name meal-log --branch main
-```
+> **注意**: 環境変数の変更は、次のデプロイから効きます。設定したら、再デプロイしてください。再デプロイの操作（ダッシュボードの Deployments からの再実行など）は、実機で確かめていません（未確認）。確かめられるまでは、main への次のマージで本番に出る、と考えてください。また、GitHub 連携のプロジェクトに `wrangler pages secret put` で入れた値が本番に効くかも、未確認です（効かないときは、ダッシュボードの「Settings」→「Variables and secrets」の「Production」に入れます）。
 
 ## 6. 認証を省く設定（開発用）が本番に入っていないことを確かめる
 
 `DEV_USER_EMAIL` を設定すると、API は JWT を検証せず、誰でもその人として記録を読み書きできます。本番とプレビューの環境のどちらにも、設定されていないことを確かめます。
 
-1. `DEV_USER_EMAIL` が設定されていない。あれば削除して、もう一度デプロイする
+1. `DEV_USER_EMAIL` が設定されていない。あれば削除して、再デプロイする（手順5。方法は未確認）
    - ダッシュボードの「Settings」→「Variables and secrets」に、`DEV_USER_EMAIL` がない（「Production」と「Preview」の両方）
    - `npx wrangler pages secret list --project-name meal-log` の出力に、`DEV_USER_EMAIL` が出ない
 2. 手元のリポジトリの設定ファイルに書かれていない
@@ -209,7 +207,7 @@ grep -rn DEV_USER_EMAIL wrangler.dev.jsonc wrangler.migrate.jsonc dist
 
 3. 公開したサイトで実際に確かめる（手順7の「Access を通っていないときの 401」が、そのまま確認になります。`DEV_USER_EMAIL` が入っていると、401 ではなく 200 が返ります）
 
-> **注意**: `npm run dev:api` のコマンドには `--binding DEV_USER_EMAIL=dev@example.com` が入っています。これは手元の確認用です。本番のデプロイ（`wrangler pages deploy`）のコマンドには付けず、`wrangler pages secret put` などでも設定しないでください。
+> **注意**: `npm run dev:api` のコマンドには `--binding DEV_USER_EMAIL=dev@example.com` が入っています。これは手元の確認用です。Cloudflare のビルドの設定（Build command など）には付けず、`wrangler pages secret put` などでも設定しないでください。
 
 ## 7. 動作確認
 
@@ -217,15 +215,15 @@ grep -rn DEV_USER_EMAIL wrangler.dev.jsonc wrangler.migrate.jsonc dist
    - 許可していないメールアドレスでは、入れない（Access に拒否される）
 2. **記録する**: 昼の欄に品を追加する。読み込み直しても残っている
 3. **別の端末で見える**: 別の端末（またはシークレットウィンドウ）で同じアドレスを開き、同じメールアドレスでログインする。2. の記録が見える
-4. **Access を通っていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（デプロイごとに付く `https://<ハッシュ>.<サブドメイン>.pages.dev`。デプロイしたときに wrangler が表示する。手順4-2 のとおり、ワイルドカードを外したので Access が掛かっていないもの）に、ログインなしで API を呼ぶ
+4. **Access を通っていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（プレビューのデプロイの `https://<ハッシュ>.<サブドメイン>.pages.dev`。ダッシュボードの「Deployments」の一覧にある。手順4-2 のとおり、ワイルドカードを外したので Access が掛かっていないもの）に、ログインなしで API を呼ぶ。プレビューには `DB` の接続と環境変数がない（手順3-3）ので、ここで確かめられるのは「Access なしで記録が読み書きできない」ことです
 
 ```sh
 curl -i 'https://<ハッシュ>.<サブドメイン>.pages.dev/api/meals'
 ```
 
-   - 期待する結果: `401`、本文は `{"error":{"type":"Unauthorized",…}}`
-   - `500`（`AuthConfigurationError`）: 手順5の環境変数がない、または入れた後にデプロイしていない
-   - `200`: **危険**。`DEV_USER_EMAIL` が設定されている。すぐに手順6で消して、もう一度デプロイする
+   - 期待する結果: `401`（本文は `{"error":{"type":"Unauthorized",…}}`）か、`500`（`AuthConfigurationError`）。プレビューには手順5の環境変数を入れていないため、`500` になることが多い。どちらも、記録は読み書きされていない
+   - `200`: **危険**。`DEV_USER_EMAIL` が設定されている（Preview にも入っている）。すぐに手順6で消して、再デプロイする
+   - 本番に手順5の環境変数が効いているかは、この確認ではわかりません。手順7の1から3（ログインして記録できる）で確かめます。ログインしても API が `500`（`AuthConfigurationError`）のときは、本番の環境変数がない、または入れた後に再デプロイしていない
    - 本番のアドレス（Access が掛かっている）を、ログインなしで `curl` すると、API より前に Access がログインの画面への転送（302）や 403 を返します。これも、守られている印です
 
 5. **ログインの期限切れ**: Session Duration が過ぎた後に操作すると、画面に「ログインの期限が切れました。ページを読み込み直してください」と出る。読み込み直すとログインの画面になる（正しい動作）
@@ -244,4 +242,16 @@ curl -i 'https://<ハッシュ>.<サブドメイン>.pages.dev/api/meals'
 
 ## 更新するとき
 
-画面や API を変えたら、手順3-2のコマンド（`npm run build` と `wrangler pages deploy`）でもう一度デプロイします。マイグレーションを増やしたときは、先に手順2のコマンドで本番の D1 に適用してからデプロイします。
+### 画面や API を変える PR
+
+main にマージすると、Cloudflare が自動で本番にデプロイします。手元でのデプロイは要りません。
+
+### 表を変える PR（`migrations/` に新しいファイルが増えるもの）
+
+表の変更は自動では適用されません。**マージの前に**、手順2のコマンドで本番の D1 に適用します。マージで新しいコードが本番に出る時点で、表が変わっていないと、API が壊れるためです。
+
+マージの前に適用するので、適用しても、今本番で動いているコードが壊れない変更（列の追加など）にします。壊れる変更（列の削除や名前の変更など）は、2回に分けます（例: 先に新しい列を足して、コードをそちらに切り替えるPRをマージし、その後で古い列を消す PR を出す）。
+
+### 環境変数を変えたとき
+
+手順5の注意のとおり、次のデプロイから効きます。再デプロイの操作は未確認です。
