@@ -22,21 +22,22 @@ function App({ repository, today: fixedToday }: Props) {
   const [mealRepository] = useState(() => repository ?? createDefaultMealRepository())
   const today = useToday(fixedToday)
   const [hash, setHash] = useState(() => window.location.hash)
-  // 日が過ぎた予定を「食べた」にしたら上げて、画面に読み直させる
+  // 日が過ぎた予定を「食べた」にしたときと、タブや画面に戻ってきたときに上げて、画面に読み直させる
   const [revision, setRevision] = useState(0)
   // 日が過ぎた予定を「食べた」にできなかったときのエラー
   const [autoUpdateError, setAutoUpdateError] = useState<string | null>(null)
 
-  // アプリを開いたとき、日付をまたいだとき、タブや画面に戻ってきたときに、過去の日の「予定」を「食べた」にする
+  // アプリを開いたとき、日付をまたいだとき、タブや画面に戻ってきたときに、過去の日の「予定」を「食べた」にする。
+  // タブや画面に戻ってきたときは、別の端末で記録が変わっているかもしれないので、更新が0件でも画面に読み直させる
   useEffect(() => {
     let cancelled = false
-    function completePastPlans() {
+    function completePastPlans(reload: boolean) {
       mealRepository
         .markPlannedAsEatenBefore(today)
         .then((updated) => {
           if (cancelled) return
           setAutoUpdateError(null)
-          if (updated.length > 0) setRevision((value) => value + 1)
+          if (reload || updated.length > 0) setRevision((value) => value + 1)
         })
         .catch(async (cause: unknown) => {
           // 読み込めないときは、各画面の読み込みでエラーを表示するので、ここでは表示しない。
@@ -47,18 +48,22 @@ function App({ repository, today: fixedToday }: Props) {
           )
           if (cancelled) return
           setAutoUpdateError(readable ? `日が過ぎた予定を「食べた」にできませんでした: ${messageOf(cause)}` : null)
+          if (reload) setRevision((value) => value + 1)
         })
     }
     function onVisibilityChange() {
-      if (document.visibilityState === 'visible') completePastPlans()
+      if (document.visibilityState === 'visible') completePastPlans(true)
     }
-    completePastPlans()
+    function onFocus() {
+      completePastPlans(true)
+    }
+    completePastPlans(false)
     document.addEventListener('visibilitychange', onVisibilityChange)
-    window.addEventListener('focus', completePastPlans)
+    window.addEventListener('focus', onFocus)
     return () => {
       cancelled = true
       document.removeEventListener('visibilitychange', onVisibilityChange)
-      window.removeEventListener('focus', completePastPlans)
+      window.removeEventListener('focus', onFocus)
     }
   }, [mealRepository, today])
 

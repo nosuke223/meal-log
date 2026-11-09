@@ -381,6 +381,74 @@ describe('日が過ぎた予定', () => {
   })
 })
 
+describe('タブや画面に戻ってきたとき', () => {
+  test('ほかで追加・削除した品が、読み込み直さずに一覧に反映され、入力中の品名と選んだジャンル・料理の分類は残る', async () => {
+    seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' }])
+    render(<App today={TODAY} />)
+    const lunch = within(section('昼'))
+    expect(await lunch.findByRole('button', { name: /うどん/ })).toBeInTheDocument()
+
+    // 入力の途中
+    fireEvent.change(lunch.getByRole('textbox', { name: '新しい品名' }), { target: { value: 'おにぎり' } })
+    const genre = within(lunch.getByRole('group', { name: 'ジャンル' }))
+    const dish = within(lunch.getByRole('group', { name: '料理の分類' }))
+    fireEvent.click(genre.getByRole('button', { name: '和' }))
+    fireEvent.click(dish.getByRole('button', { name: '主食' }))
+
+    // 別の端末で「そば」を追加し、「うどん」を削除した
+    seed([{ id: 'soba', date: TODAY, mealType: 'lunch', name: 'そば', status: 'planned' }])
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    expect(await lunch.findByRole('button', { name: /そば/ })).toBeInTheDocument()
+    expect(lunch.queryByRole('button', { name: /うどん/ })).not.toBeInTheDocument()
+
+    // 別の端末で「そば」を削除した
+    seed([])
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await vi.waitFor(() => {
+      expect(lunch.queryByRole('button', { name: /そば/ })).not.toBeInTheDocument()
+    })
+
+    expect(lunch.getByRole('textbox', { name: '新しい品名' })).toHaveValue('おにぎり')
+    expect(genre.getByRole('button', { name: '和' })).toHaveAttribute('aria-pressed', 'true')
+    expect(dish.getByRole('button', { name: '主食' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('変更の欄を開いている品が、ほかで削除されていたら、その品と変更の欄を閉じる', async () => {
+    seed([
+      { id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' },
+      { id: 'rice', date: TODAY, mealType: 'lunch', name: 'ごはん', status: 'planned' },
+    ])
+    render(<App today={TODAY} />)
+    const lunch = within(section('昼'))
+    fireEvent.click(await lunch.findByRole('button', { name: /うどん/ }))
+    expect(lunch.getByRole('form', { name: '品の変更' })).toBeInTheDocument()
+
+    seed([{ id: 'rice', date: TODAY, mealType: 'lunch', name: 'ごはん', status: 'planned' }])
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await vi.waitFor(() => {
+      expect(lunch.queryByRole('form', { name: '品の変更' })).not.toBeInTheDocument()
+    })
+    expect(lunch.getByRole('button', { name: /ごはん/ })).toBeInTheDocument()
+  })
+
+  test('画面が隠れたとき（visibilitychange で hidden）は読み直さない', async () => {
+    render(<App today={TODAY} />)
+    seed([{ id: 'soba', date: TODAY, mealType: 'lunch', name: 'そば', status: 'planned' }])
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(within(section('昼')).queryByRole('button', { name: /そば/ })).not.toBeInTheDocument()
+  })
+})
+
 test('保存先へのアクセスが拒否される環境でも、画面を表示し、エラーを表示する', async () => {
   vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
     throw new DOMException('denied', 'SecurityError')
