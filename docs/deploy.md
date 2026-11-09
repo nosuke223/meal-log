@@ -9,8 +9,11 @@
 | 名前 | 内容 | この文書での例 |
 | --- | --- | --- |
 | D1 のデータベース名 | 記録を入れるデータベース | `meal-log` |
-| Pages のプロジェクト名 | 公開するサイト。アドレスは `https://<プロジェクト名>.pages.dev` | `meal-log` |
+| Pages のプロジェクト名 | 公開するサイト | `meal-log` |
+| 実際の本番のアドレス | 手順3-2のデプロイ後に確かめる。`<プロジェクト名>.pages.dev` とは限らない（下の注意） | `<本番のホスト名>`（例: `meal-log-oqi.pages.dev`） |
 | 所有者のメールアドレス | Access で許可する人 | `<自分のメールアドレス>` |
+
+> **注意**: 「meal-log」の名前がすでに他で使われていると、アドレスに文字が付きます（例: `meal-log-oqi.pages.dev`）。実際の本番のアドレスは、手順3-2の `wrangler pages deploy` の出力（`https://<ハッシュ>.<サブドメイン>.pages.dev`）か、ダッシュボードの「Workers & Pages」→ `meal-log` で確かめます。手順4（Access で守るホスト名）と手順7では、この `<本番のホスト名>` を使います。
 
 アプリが読む環境変数とバインディングは次のとおりです（詳しくは README の「環境変数」）。
 
@@ -23,7 +26,10 @@
 
 ## 事前の準備
 
-- Cloudflare のアカウントがあり、Zero Trust（Access）が使える（無料のプランで足ります。初めて使うときは、Zero Trust のチーム名を決める画面が出ます）
+- Cloudflare のアカウントがある
+- Zero Trust（Access）が使える。初めて Zero Trust を開くと、アプリケーションの一覧ではなく「Finish your account setup」と出ます。次の順で進めます
+  1. チーム名を決める画面が出たら、チーム名を決める（後で `ACCESS_TEAM_NAME` の確認に使うので、場所は手順4で説明します）
+  2. **Choose a plan** でプランを選ぶ（Free でよい）
 - このリポジトリを手元に clone し、`npm ci` で依存を入れてある
 - wrangler にログインしてある
 
@@ -31,13 +37,19 @@
 npx wrangler login
 ```
 
+> **注意**: `wrangler login` は、ブラウザが開ける環境で行います。リモートの端末（SSH）では、ログイン後のブラウザの戻り先（`localhost:8976`）が届かないことがあります。そのときは、手元のマシンで行うか、ポートを転送します（`ssh -L 8976:localhost:8976 …`）。
+
 ## 1. D1 のデータベースを作る
 
 ```sh
 npx wrangler d1 create meal-log
 ```
 
-出力に `database_id`（UUID）が出ます。手順2で使うので控えます。ダッシュボードでは「Storage & Databases」→「D1 SQL Database」に作られたデータベースが見えます。
+出力に `database_id`（UUID）が出ます。手順2で使うので控えます。
+
+> **注意**: 出力には、設定の例（`"binding": "meal_log"` など）も出ます。この `"binding"` の名前は使いません。手順2のとおり `DB` にします（コードが `env.DB` を読むため）。
+
+ダッシュボードでは「Storage & Databases」→「D1 SQL Database」に作られたデータベースが見えます。
 
 ## 2. 本番の D1 にマイグレーションを適用する
 
@@ -101,6 +113,8 @@ npx wrangler pages deploy dist --project-name meal-log --branch main
 
 > **注意**: 手元の `npm run dev` と `npm run dev:api` が使う `DEV_USER_EMAIL` は、`dist/` にも `functions/` にも入っていません。入れないでください。
 
+出力の `https://<ハッシュ>.<サブドメイン>.pages.dev` の `<サブドメイン>.pages.dev` の部分が、実際の本番のホスト名（`<本番のホスト名>`）です。控えます（ダッシュボードの「Workers & Pages」→ `meal-log` でも確かめられます）。
+
 この時点では環境変数がないので、API は 500（`AuthConfigurationError`）を返します。手順3-3から5で設定した後に、もう一度デプロイします。
 
 ### 3-3. D1 をつなぐ（バインディング）
@@ -118,41 +132,58 @@ npx wrangler pages deploy dist --project-name meal-log --branch main
 
 ## 4. Access のアプリケーションとポリシーを作る
 
-独自ドメインを持たず `pages.dev` で公開する場合、通常の Self-hosted アプリケーションの作成画面では `pages.dev` のドメインを選べません（選べるのはアカウント内の有効な zone だけ）。そこで、Pages の「Enable access policy」が自動で作るアプリケーションを編集して使います（Cloudflare の [Pages の既知の問題](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)の手順）。独自ドメインを使う場合は、通常の Self-hosted アプリケーションを作ってもかまいません（Path を空にして、手順4-2 の 3 から 6 と同じ設定にする）。
+独自ドメインを持たず `pages.dev` で公開する場合、通常の Self-hosted アプリケーションの作成画面では `pages.dev` のドメインを選べません（選べるのはアカウント内の有効な zone だけ）。そこで、Pages の Access の設定が自動で作るアプリケーションを編集して使います（Cloudflare の [Pages の既知の問題](https://developers.cloudflare.com/pages/platform/known-issues/#enable-access-on-your-pagesdev-domain)の手順）。独自ドメインを使う場合は、通常の Self-hosted アプリケーションを作ってもかまいません（Path を空にして、手順4-2 の 3 から 6 と同じ設定にする）。
 
-### 4-1. Pages の Access policy を有効にする
+画面の名前や場所は、Cloudflare の更新で変わることがあります。以下は、実際に見えた英語の表記です。
 
-1. ダッシュボードの「Workers & Pages」→ `meal-log` →「Settings」→「General」→「Access policy」→「Enable access policy」を押す
+### 4-1. Pages の Preview access を制限する
+
+1. ダッシュボードの「Workers & Pages」→ `meal-log` →「Settings」→「General」→ **Preview access** の **Restrict previews** を押す
 2. 案内に従って進む。Access のアプリケーションが自動で作られる
 
-初めて有効にしたときに作られるアプリケーションは、プレビュー用の `*.<プロジェクト名>.pages.dev`（ワイルドカード）だけを対象にしていて、本番の `<プロジェクト名>.pages.dev` は含まれません（この操作だけでは本番は守られません）。次の手順で、このホスト名を本番のものに書き換えます。
+この操作で作られるアプリケーションは、プレビュー用のワイルドカード（`*.<サブドメイン>.pages.dev`）だけを守ります。本番のホスト名（`<本番のホスト名>`）は含まれません（この操作だけでは本番は守られません）。次の手順で、このホスト名を本番のものに書き換えます。
 
 ### 4-2. 対象を本番のアドレスだけにする
 
-1. ダッシュボードの「Zero Trust」→「Access」→「Applications」（名前や場所は画面の更新で変わることがあります）を開き、4-1 で作られたアプリケーション（名前は `<プロジェクト名>` など）を編集する
-2. 「Application domain」（Public hostname）にある既存のホスト名（`*.<プロジェクト名>.pages.dev`）を編集する。「Subdomain」の欄の `*` だけを消して、ホスト名を `<プロジェクト名>.pages.dev` にする（ホスト名を削除してから作り直さない）。ほかにワイルドカードのホスト名が残っていたら削除し、本番の `<プロジェクト名>.pages.dev` だけにする
+1. ダッシュボードの「Zero Trust」→「Access controls」→「Applications」を開き、4-1 で作られたアプリケーション（名前は `<プロジェクト名>` など）を編集する
+2. 「Application domain」（Public hostname）にある既存のホスト名（`*.<サブドメイン>.pages.dev`）を編集する。「Subdomain」の欄の `*` だけを消して、ホスト名を `<本番のホスト名>`（例: `meal-log-oqi.pages.dev`）にする（ホスト名を削除してから作り直さない）。ほかにワイルドカードのホスト名が残っていたら削除し、`<本番のホスト名>` だけにする
    - **Path は空にする**（サイト全体を守る。`/api` もこれで守られる）
 3. Session Duration: 好みの長さ（ログインの期限。切れると画面にエラーが出るので、読み込み直してログインし直す）
 4. 「Policies」を確認する。自動で作られたポリシーが、所有者だけを許可しているものにする
    - Action: `Allow`
    - Include: 「Emails」→ `<自分のメールアドレス>`（所有者のメールアドレスだけ。「Everyone」や「Emails ending in」にしない。自動で入った他の許可は削除する）
 5. 保存する
-6. このアプリケーションの「Overview」にある **Application Audience (AUD) Tag** を控える（手順5で使う）。手順5の `ACCESS_AUD` には、この編集したアプリケーションの AUD タグを使う
+6. AUD タグを控える（手順5で使う）。アプリケーションの編集画面（Zero Trust →「Access controls」→「Applications」→ アプリケーション名）の **Additional settings** のタブにある **Application Audience (AUD) Tag** です（「Details」のボタンの先には、名前とセッションの長さしかありません）。手順5の `ACCESS_AUD` には、この編集したアプリケーションの AUD タグを使う
 
 > **注意（失敗しやすい所）: Access で `/api` も守ること。** Path を空にしてサイト全体を守れば、`/api` も同じアプリケーションに入ります。「`/` だけ」「画面のパスだけ」のように Path を決めると、`/api` が守られず、Access を通らない API の呼び出しになります（API も JWT を検証するので 401 になりますが、守りは二重にしておく）。別のアプリケーションに分けるときは、`/api` にも同じ許可の Policy を付けてください。
 
-> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<プロジェクト名>.pages.dev`）は、別のホスト名です。** 4-2 でワイルドカードを外すと、プレビューのアドレスには Access が掛からなくなります。手順7の「Access を通っていないときに 401 が返る」の確認では、この掛かっていないアドレスを使います。プレビューにも記録の API が公開されるのを避けたいときは、手順3-3 のとおり「Preview」に `DB` のバインディングと手順5の環境変数を設定しないでおきます。そうすれば、プレビューの API は記録を読み書きできません。
+> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<サブドメイン>.pages.dev`）は、別のホスト名です。** 4-2 でワイルドカードを外すと、プレビューのアドレスには Access が掛からなくなります。手順7の「Access を通っていないときに 401 が返る」の確認では、この掛かっていないアドレスを使います。プレビューにも記録の API が公開されるのを避けたいときは、手順3-3 のとおり「Preview」に `DB` のバインディングと手順5の環境変数を設定しないでおきます。そうすれば、プレビューの API は記録を読み書きできません。
 
-Zero Trust の **チーム名** は、「Settings」→「Custom Pages」の「Team domain」（`<チーム名>.cloudflareaccess.com`）の `<チーム名>` の部分です。控えます。
+Zero Trust の **チーム名** は、Zero Trust の **Overview** の「Account details」にある **Team domain**（`<チーム名>.cloudflareaccess.com`）の `<チーム名>` の部分です。控えます。その下の「Team name」は表示名なので、環境変数には使いません。
 
 ## 5. Access のチーム名と AUD タグを、Pages の環境変数に設定する
 
-「Workers & Pages」→ `meal-log` →「Settings」→「Variables and Secrets」→「Add」で、「Production」に次の2つを「Text」で追加します。
+ダッシュボードの「Variables and secrets」に追加しても、再デプロイしても、API が 500（「環境変数 ACCESS_TEAM_NAME と ACCESS_AUD を設定してください」）のままだったことがあります。環境変数は、次のコマンドで入れます（Production）。
 
-| Variable name | 値 |
+```sh
+npx wrangler pages secret put ACCESS_TEAM_NAME --project-name meal-log
+npx wrangler pages secret put ACCESS_AUD --project-name meal-log
+```
+
+値は、聞かれたときに貼ります（上のコマンドは1つずつ実行します）。
+
+| 名前 | 値 |
 | --- | --- |
 | `ACCESS_TEAM_NAME` | `<チーム名>`（`<チーム名>.cloudflareaccess.com` の前の部分だけ。`https://` や `.cloudflareaccess.com` は付けない。英数字とハイフン） |
 | `ACCESS_AUD` | 手順4-2 で控えた AUD タグ（編集したアプリケーションのもの） |
+
+入ったことは、次のコマンドで確かめます（名前だけが表示されます）。
+
+```sh
+npx wrangler pages secret list --project-name meal-log
+```
+
+> **注意**: ダッシュボードの「Variables and secrets」に同じ名前の変数がすでにあるときは、先に削除してからコマンドで入れてください。
 
 > **注意**: 環境変数の変更は、次のデプロイから効きます。設定したら、手順3-2のコマンドでもう一度デプロイしてください。
 
@@ -165,7 +196,9 @@ npx wrangler pages deploy dist --project-name meal-log --branch main
 
 `DEV_USER_EMAIL` を設定すると、API は JWT を検証せず、誰でもその人として記録を読み書きできます。本番とプレビューの環境のどちらにも、設定されていないことを確かめます。
 
-1. ダッシュボードの「Settings」→「Variables and Secrets」に、`DEV_USER_EMAIL` がない（「Production」と「Preview」の両方）。あれば削除して、もう一度デプロイする
+1. `DEV_USER_EMAIL` が設定されていない。あれば削除して、もう一度デプロイする
+   - ダッシュボードの「Settings」→「Variables and secrets」に、`DEV_USER_EMAIL` がない（「Production」と「Preview」の両方）
+   - `npx wrangler pages secret list --project-name meal-log` の出力に、`DEV_USER_EMAIL` が出ない
 2. 手元のリポジトリの設定ファイルに書かれていない
 
 ```sh
@@ -180,14 +213,14 @@ grep -rn DEV_USER_EMAIL wrangler.dev.jsonc wrangler.migrate.jsonc dist
 
 ## 7. 動作確認
 
-1. **開く**: ブラウザで `https://<プロジェクト名>.pages.dev` を開く。Access のログイン画面が出る。手順4-2 で許可したメールアドレスでログインすると、今日の記録の画面が開く
+1. **開く**: ブラウザで `https://<本番のホスト名>` を開く。Access のログイン画面が出る。手順4-2 で許可したメールアドレスでログインすると、今日の記録の画面が開く
    - 許可していないメールアドレスでは、入れない（Access に拒否される）
 2. **記録する**: 昼の欄に品を追加する。読み込み直しても残っている
 3. **別の端末で見える**: 別の端末（またはシークレットウィンドウ）で同じアドレスを開き、同じメールアドレスでログインする。2. の記録が見える
-4. **Access を通っていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（デプロイごとに付く `https://<ハッシュ>.<プロジェクト名>.pages.dev`。デプロイしたときに wrangler が表示する。手順4-2 のとおり、ワイルドカードを外したので Access が掛かっていないもの）に、ログインなしで API を呼ぶ
+4. **Access を通っていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（デプロイごとに付く `https://<ハッシュ>.<サブドメイン>.pages.dev`。デプロイしたときに wrangler が表示する。手順4-2 のとおり、ワイルドカードを外したので Access が掛かっていないもの）に、ログインなしで API を呼ぶ
 
 ```sh
-curl -i 'https://<ハッシュ>.<プロジェクト名>.pages.dev/api/meals'
+curl -i 'https://<ハッシュ>.<サブドメイン>.pages.dev/api/meals'
 ```
 
    - 期待する結果: `401`、本文は `{"error":{"type":"Unauthorized",…}}`
