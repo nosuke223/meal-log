@@ -24,13 +24,13 @@ meal-log（食べたものの記録。nosuke223/meal-log）で実際に作った
 | --- | --- |
 | `functions/api/[[path]].ts` | `/api/` 以下のすべてのリクエストを受ける入口。処理は `server/` に書き、ここは呼ぶだけにする |
 | `server/` | API の処理、認証、D1 への保存。単体テスト（`server/**/*.test.ts`）もここに置く |
-| `migrations/0001_<内容>.sql` | 表の作り方。番号順に適用される。一度適用したファイルは変えず、変えるときは新しい番号のファイルを足す |
+| `migrations/0001_<内容>.sql` | 表の作り方。番号順に適用される。一度適用したファイルは変えず、変えるときは新しい番号のファイルを足す。本番とプレビューには、アプリが自分で当てる（下の「マイグレーション」） |
 | `wrangler.dev.jsonc` | 手元とテスト専用の wrangler の設定（手元の D1 の名前とマイグレーションの場所だけ） |
 | `tsconfig.server.json` | `functions/` と `server/` の型検査。`npm run build` の型検査に含める |
 
 ### wrangler の設定ファイルの名前
 
-`wrangler.toml`、`wrangler.json`、`wrangler.jsonc` は作らない。Pages はこの名前のファイルを本番の設定として読み、ダッシュボードで D1 のバインディングや環境変数を設定できなくなる。手元用は `wrangler.dev.jsonc` のように別の名前にし、本番の D1 の ID は書かない（本番の設定は所有者が Cloudflare の画面で行う）。
+`wrangler.toml`、`wrangler.json`、`wrangler.jsonc` は作らない。Pages はこの名前のファイルを本番の設定として読み、ダッシュボードで D1 のバインディングや環境変数を設定できなくなる。手元用は `wrangler.dev.jsonc` のように別の名前にし、本番の D1 の ID は書かない（本番の設定は所有者が Cloudflare の画面で行う）。毎日の処理などの別の Worker は、フォルダの中に専用の設定ファイルを置く（[public-service.md](public-service.md) の「毎日の処理の Worker」）。
 
 ### 認証（Access）
 
@@ -48,11 +48,24 @@ meal-log（食べたものの記録。nosuke223/meal-log）で実際に作った
 - 同時に書いたときの決まり（後の書き込みが先の変更を消さない、など）は、Codex がよく指摘する。どこまで守るかを Issue に書いておく（1人で使うなら「楽観ロックで割り込みを見つけたら読み直す」程度で足りる）
 - 記録の ID をアドレスに入れるとき、`.` や `..` のような ID は URL の正規化で消える。ID の形を決めるか、受け付けない（meal-log PR #35 の Codex の指摘）
 
+### マイグレーション（アプリが自分で当てる）
+
+本番とプレビューの D1 へのマイグレーションは、所有者が手で当てず、アプリが自分で当てる（2026-11-10 に所有者と決めた。agent-env の docs/decisions.md の「公開サービスの方針」）。アプリはもともと自分の D1 につながっている（バインディング）ので、データベースを操作する鍵をどこにも置かずに済む。プレビューのアプリはプレビューの D1 にしか当てられないので、本番には触れない。
+
+- 取り込み: `migrations/*.sql` を、ビルドの前にスクリプト（例: `scripts/bundle-migrations.mjs`）で TypeScript のファイル（例: `server/migrations.generated.ts`。名前と SQL の一覧）に書き出し、アプリに含める。`npm run build`（Cloudflare のビルドもこれを使う）と `npm run test` の前に動かす。書き出したファイルはコミットしない（`.gitignore` に入れる）
+- 記録: 当てたものは、wrangler と同じ表 `d1_migrations`（`id`、`name`（重ならない）、`applied_at`）に記録する。手で `wrangler d1 migrations apply` を使った D1 とも食い違わない
+- 当てる時: API の入口で、その実行環境で最初のリクエストのときに1回だけ確かめ、まだのものを番号順に当てる（2回目からは確かめない）。毎日の処理の Worker も、処理の前に同じ関数を呼ぶ
+- 二重に当てない: 1つのマイグレーションの SQL と、`d1_migrations` への記録を、D1 の batch（1つのトランザクション）で書く。同時に別のリクエストが当てていたら、記録の重なりで batch ごと取り消されるので、記録を読み直して次に進む
+- 失敗したら: その SQL は取り消され（batch のため）、API はエラー（500）を返す。監視（Sentry）に届く
+- 表の変更は「足すだけ」を基本にする: 公開とマイグレーションは同時ではないので、少しの間、新しいプログラムと古い表、または古いプログラムと新しい表が並ぶ。表や列を足す（足す列は空を許すか、既定の値を持たせる）だけなら、どちらの組み合わせでも動く。列や表を消す・名前を変えるのは、プログラムが使わなくなってから、別の Issue で行う（`merge:manual`）
+- 手でのコマンド（下の「公開の準備」の 3.）は、緊急のときのための予備にする
+
 ### テスト
 
 - Vitest を、画面（`jsdom`）とサーバー（`node`）の2つのプロジェクトに分ける（`vite.config.ts` の `test.projects`）。サーバーのほうは、D1 の起動に時間がかかるので、タイムアウトを長めにする
 - テストの D1 は、wrangler の `getPlatformProxy`（Miniflare）で、保存せずメモリーの中に作り、マイグレーションを適用してから使う（meal-log の `server/testDatabase.ts`）
 - マイグレーションが手元の D1 に適用できることも、`wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc --persist-to <一時的な場所>` を実行するテストで確かめる
+- アプリが自分で当てる処理は、空の D1 に全部を当てられる、2回目は何もしない、同時に2つ動いても1回だけ当たる、途中で失敗したら記録が残らない、wrangler で当てた D1 を認める、をテストで確かめる
 - 画面のテスト（e2e）は、開発サーバーで `/api/` を手元の D1 につなぐ Vite のプラグインを使うと、本番と同じ API を通して確かめられる（meal-log の `server/devApi.ts`。`apply: 'serve'` で開発サーバーだけに入れ、ビルドには入れない）
 - **手元では、D1 を使うテストを動かせない。** エージェントの sandbox はポートを開けない（`listen EPERM`）。GitHub 上のテスト（ジョブ `test`）で動かし、PR 本文の「確認方法」に、手元で動かせなかったテストを書く。失敗すれば、ランナーがログを渡して直させる
 
@@ -74,7 +87,7 @@ meal-log（食べたものの記録。nosuke223/meal-log）で実際に作った
 
 1. **wrangler にログインする**: `npx wrangler login`。SSH で入った端末では、ログイン後の戻り先（`localhost:8976`）が届かないことがある。手元のマシンで行うか、`ssh -L 8976:localhost:8976 …` で転送する
 2. **D1 を作る**: `npx wrangler d1 create <名前>`。出力の `database_id` を控える。出力の例にある `"binding"` の名前は使わず、コードが読む名前（例: `DB`）にする
-3. **本番の D1 にマイグレーションを適用する**: `database_id` を書いた設定ファイルを `wrangler.migrate.jsonc`（コミットしない）として作り、`npx wrangler d1 migrations apply DB --remote --config wrangler.migrate.jsonc`
+3. **本番の D1 にマイグレーションを適用する**（アプリが自分で当てる作りになっていれば不要。緊急のときの予備）: `database_id` を書いた設定ファイルを `wrangler.migrate.jsonc`（コミットしない）として作り、`npx wrangler d1 migrations apply DB --remote --config wrangler.migrate.jsonc`
 4. **Pages に D1 をつなぐ**: ダッシュボードの Pages のプロジェクト →「Settings」→「Bindings」で、D1 を `DB` の名前で「Production」につなぐ。「Preview」は、1. で決めたとおり（試さないならつながない）
 5. **Zero Trust の最初の設定**: 初めてなら「Finish your account setup」が出る。チーム名を決め、プランを選ぶ（Free でよい）
 6. **Access で本番を守る**: `pages.dev` のアドレスは、普通の Access のアプリケーションの作成画面では選べない。Pages の「Settings」→「General」→ Preview access の **Restrict previews** で自動で作られるアプリケーションを編集し、ホスト名を本番のもの（`<プロジェクト名>.pages.dev` とは限らない。名前が使われていると `meal-log-oqi.pages.dev` のように文字が付く）だけにする。Path は空にする（`/api` も守る）。ポリシーは、許可するメールアドレスだけにする
@@ -83,4 +96,4 @@ meal-log（食べたものの記録。nosuke223/meal-log）で実際に作った
 9. **入れ直したら公開し直す**: 環境変数は次の公開から効く。ダッシュボードで最新の本番の公開をやり直す（Retry deployment）か、次のマージを待つ
 10. **確かめる**: 本番のアドレスを開くと Access のログインが出て、許可したメールアドレスで入れる。Access の掛かっていないアドレス（公開ごとの `<ハッシュ>.<サブドメイン>.pages.dev`）に、ログインなしで `curl -i .../api/<何か>` を送ると 401 になる（500 なら環境変数がない、200 なら `DEV_USER_EMAIL` が入っていて危険）
 
-表を増やしたとき（マイグレーションを足したとき）は、マージの前に 3. のコマンドで本番の D1 に適用する。適用済みのものは飛ばされる。
+表を増やしたとき（マイグレーションを足したとき）は、アプリが公開された後の最初のリクエストで自分で当てる。アプリが自分で当てる作りになる前のプロジェクトでは、マージの前に 3. のコマンドで本番の D1 に適用する（適用済みのものは飛ばされる）。
