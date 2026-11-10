@@ -1,0 +1,16 @@
+# 依存の更新の PR を、Dependabot に週に1回作らせる（agent-env の docs/review-and-merge.md の「依存の更新」）。
+# 小さな更新（マイナーとパッチ）は1つの PR にまとめ、テストが通れば自動でマージされる（AUTO_MERGE=all のとき）。
+# 大きな更新（メジャー）は作らせない。壊れやすいので、必要になったら Issue にして、エージェントに直させる
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2
+    groups:
+      dependencies:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
