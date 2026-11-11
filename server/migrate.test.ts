@@ -54,10 +54,16 @@ type DbHooks = {
   onBatch?: () => void
 }
 
-/** 記録の読み書きを見張る D1。batch には D1 の文のまま渡す必要があるので、記録を読む文だけを包む */
+type ExecutableD1 = D1Database & { exec(query: string): Promise<unknown> }
+
+/**
+ * 記録の読み書きを見張る D1。batch には D1 の文のまま渡す必要があるので、記録を読む文だけを包む。
+ * Better Auth は prepare、batch、exec があるものを D1 と見分ける（exec がないと初期化に失敗する）ので、exec も渡す
+ */
 function watchedDb(hooks: DbHooks): D1Database {
-  const db = database.db
-  return {
+  const db = database.db as ExecutableD1
+  const watched: ExecutableD1 = {
+    exec: (query) => db.exec(query),
     prepare(query) {
       const statement = db.prepare(query)
       if (query.includes('d1_migrations')) hooks.onMigrationQuery?.(query)
@@ -79,6 +85,7 @@ function watchedDb(hooks: DbHooks): D1Database {
       return db.batch(statements)
     },
   }
+  return watched
 }
 
 describe('マイグレーションを当てる処理', () => {
