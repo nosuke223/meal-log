@@ -4,12 +4,14 @@
 //   #/calendar/YYYY-MM その月のカレンダー（今月なら今日を選んだ状態、ほかの月は何も選ばない）
 //   #/data             データ（書き出し・読み込み）の画面
 //   #/login            ログインの画面
-//   #/login/<結果>      確認のメールのリンクを開いた結果を出した、ログインの画面（結果は EmailVerificationResult。
-//                      サーバーが転送する。知らない結果は、ただのログインの画面にする）
+//   #/login/<結果>      結果を出した、ログインの画面（結果は LoginNotice。確認のメールのリンクの結果はサーバーが転送する。
+//                      password-reset はパスワードを再設定した後。知らない結果は、ただのログインの画面にする）
 //   #/signup           会員登録の画面
+//   #/forgot           パスワードの再設定のメールを送る画面
+//   #/reset            新しいパスワードを決める画面（#/reset/<トークン> は再設定のメールのリンク。画面が #/reset に置き換える）
 //   #/account          アカウントの画面（ログインしていなければ、ログインの画面）
 //   それ以外（空を含む） 今日の記録の画面
-import { isEmailVerificationResult, type EmailVerificationResult } from './auth/authClient'
+import { isLoginNotice, type LoginNotice } from './auth/authClient'
 import { isValidMonth, monthOf } from './calendar/calendarMonth'
 import { isValidDate } from './meals/mealRecord'
 
@@ -19,9 +21,12 @@ export type Route =
   /** selected は選んだ日（YYYY-MM-DD）。null は何も選んでいない */
   | { screen: 'calendar'; month: string; selected: string | null }
   | { screen: 'data' }
-  /** verification は、確認のメールのリンクを開いた結果。なければ null */
-  | { screen: 'login'; verification: EmailVerificationResult | null }
+  /** notice は、確認のメールのリンクを開いた結果か、パスワードを再設定した結果。なければ null */
+  | { screen: 'login'; notice: LoginNotice | null }
   | { screen: 'signup' }
+  | { screen: 'forgot' }
+  /** token は、アドレスに付いていた再設定のトークン（#/reset だけのときは null）。画面が読んだら、アドレスから消す */
+  | { screen: 'reset'; token: string | null }
   | { screen: 'account' }
 
 /**
@@ -38,9 +43,12 @@ export function parseHash(hash: string, today: string): Route {
     return { screen: 'calendar', month, selected: month === monthOf(today) ? today : null }
   }
   if (screen === 'login') {
-    return { screen, verification: isEmailVerificationResult(value) ? value : null }
+    return { screen, notice: isLoginNotice(value) ? value : null }
   }
-  if (screen === 'data' || screen === 'signup' || screen === 'account') {
+  if (screen === 'reset') {
+    return { screen, token: value ? decodeToken(value) : null }
+  }
+  if (screen === 'data' || screen === 'signup' || screen === 'account' || screen === 'forgot') {
     return { screen }
   }
   if (screen === 'day' && isValidDate(value)) {
@@ -71,9 +79,27 @@ export function dataHash(): string {
   return '#/data'
 }
 
-/** ログインの画面。verification を付けると、確認のメールのリンクを開いた結果を出す */
-export function loginHash(verification?: EmailVerificationResult): string {
-  return verification === undefined ? '#/login' : `#/login/${verification}`
+/** ログインの画面。notice を付けると、確認のメールのリンクを開いた結果か、パスワードを再設定した結果を出す */
+export function loginHash(notice?: LoginNotice): string {
+  return notice === undefined ? '#/login' : `#/login/${notice}`
+}
+
+/** パスワードの再設定のメールを送る画面 */
+export function forgotHash(): string {
+  return '#/forgot'
+}
+
+/** 新しいパスワードを決める画面。token を付けると、再設定のメールのリンクのアドレス */
+export function resetHash(token?: string): string {
+  return token === undefined ? '#/reset' : `#/reset/${encodeURIComponent(token)}`
+}
+
+function decodeToken(value: string): string | null {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return null
+  }
 }
 
 export function signupHash(): string {

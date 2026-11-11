@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, test } from 'vitest'
 import App from '../App'
 import { AUTH_MESSAGES, AuthError } from './authClient'
@@ -186,10 +186,228 @@ test('ログインの画面と会員登録の画面を、互いに行き来で�
   await expectTodayScreen()
 })
 
-test('「パスワードを忘れた」のリンクは出さない', () => {
+const NEW_PASSWORD = 'new-password-456'
+
+function requestReset(email: string) {
+  const target = form('再設定のメール')
+  fireEvent.change(target.getByLabelText('メールアドレス'), { target: { value: email } })
+  fireEvent.click(target.getByRole('button', { name: '再設定のメールを送る' }))
+}
+
+function setNewPassword(password: string) {
+  const target = form('新しいパスワード')
+  fireEvent.change(target.getByLabelText('新しいパスワード'), { target: { value: password } })
+  fireEvent.click(target.getByRole('button', { name: 'パスワードを変更する' }))
+}
+
+/** 登録・確認済みの会員 alice で、再設定のメールを送ってもらい、そのリンクのトークンを返す */
+async function memberWithResetToken(authClient: ReturnType<typeof createMemoryAuthClient>): Promise<string> {
+  await authClient.signUp('alice@example.com', PASSWORD)
+  authClient.verify('alice@example.com')
+  await authClient.requestPasswordReset('alice@example.com')
+  const token = authClient.mails.at(-1)?.token
+  if (token === undefined) throw new Error('再設定のメールがありません')
+  return token
+}
+
+test('ログインの画面の「パスワードを忘れた」で、再設定のメールを送る画面（#/forgot）に移り、「ログインへ」で戻れる', () => {
   open('#/login')
   render(<App today={TODAY} />)
-  expect(screen.queryByText(/忘れ/)).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'パスワードを忘れた' }))
+  expect(window.location.hash).toBe('#/forgot')
+  expect(screen.getByRole('heading', { name: 'パスワードの再設定' })).toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: 'ログインへ' }))
+  expect(window.location.hash).toBe('#/login')
+})
+
+test('アカウントの画面から出たログインの画面にも、「パスワードを忘れた」がある', async () => {
+  open('#/account')
+  render(<App today={TODAY} authClient={createMemoryAuthClient()} />)
+
+  fireEvent.click(await screen.findByRole('button', { name: 'パスワードを忘れた' }))
+  expect(window.location.hash).toBe('#/forgot')
+})
+
+test('登録されているメールアドレスでも、されていないメールアドレスでも、再設定のメールを送ったときの表示は同じ。送るのは登録されているときだけ', async () => {
+  const shown: string[] = []
+  for (const email of ['alice@example.com', 'nobody@example.com']) {
+    const authClient = createMemoryAuthClient()
+    await authClient.signUp('alice@example.com', PASSWORD)
+    open('#/forgot')
+    const { unmount } = render(<App today={TODAY} authClient={authClient} />)
+
+    requestReset(email)
+    const status = await screen.findByRole('status')
+    shown.push(status.textContent ?? '')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(authClient.mails.filter((mail) => mail.kind === 'resetPassword').map((mail) => mail.to)).toEqual(
+      email === 'alice@example.com' ? ['alice@example.com'] : [],
+    )
+    unmount()
+  }
+  expect(shown).toEqual([AUTH_MESSAGES.resetRequested, AUTH_MESSAGES.resetRequested])
+  expect(AUTH_MESSAGES.resetRequested).toBe('登録されているメールアドレスなら、再設定のメールを送りました。メールのリンクを開いてください')
+})
+
+test('メールアドレスの確認が済んでいない会員にも、再設定のメールを送る', async () => {
+  const authClient = createMemoryAuthClient()
+  await authClient.signUp('alice@example.com', PASSWORD)
+  open('#/forgot')
+  render(<App today={TODAY} authClient={authClient} />)
+
+  requestReset('Alice@Example.com')
+  expect(await screen.findByRole('status')).toHaveTextContent(AUTH_MESSAGES.resetRequested)
+  expect(authClient.mails.at(-1)).toMatchObject({ to: 'alice@example.com', kind: 'resetPassword' })
+})
+
+test.each([
+  ['空', '', AUTH_MESSAGES.emptyEmail],
+  ['形が正しくない', 'alice.example.com', AUTH_MESSAGES.invalidEmail],
+])('再設定のメールで、メールアドレスが%sときは、日本語のエラーを出し、送らない', async (_, email, message) => {
+  const authClient = createMemoryAuthClient()
+  open('#/forgot')
+  render(<App today={TODAY} authClient={authClient} />)
+
+  requestReset(email)
+  expect(await screen.findByRole('alert')).toHaveTextContent(message)
+  expect(authClient.mails).toHaveLength(0)
+})
+
+test('再設定のメールを送る回数の上限を超えたときは、日本語のエラーを出す', async () => {
+  const authClient = createMemoryAuthClient()
+  open('#/forgot')
+  render(<App today={TODAY} authClient={authClient} />)
+
+  authClient.failNext(new AuthError(AUTH_MESSAGES.tooManyMails))
+  requestReset('alice@example.com')
+  expect(await screen.findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.tooManyMails)
+  expect(screen.queryByRole('status')).not.toBeInTheDocument()
+})
+
+test('メールのリンク（#/reset/<トークン>）を開くと、トークンをアドレスから消し（履歴は増やさない）、新しいパスワードを決められる。決めた後は、ログインの画面に移り、ログインした状態にはならない', async () => {
+  const authClient = createMemoryAuthClient()
+  const token = await memberWithResetToken(authClient)
+  const historyLength = window.history.length
+  open(`#/reset/${token}`)
+  render(<App today={TODAY} authClient={authClient} />)
+
+  // トークンはアドレスに残らない
+  await screen.findByRole('form', { name: '新しいパスワード' })
+  expect(window.location.hash).toBe('#/reset')
+  expect(window.history.length).toBe(historyLength)
+
+  setNewPassword(NEW_PASSWORD)
+  expect(await screen.findByRole('status')).toHaveTextContent('パスワードを変更しました。ログインしてください')
+  expect(window.location.hash).toBe('#/login/password-reset')
+  expect(await authClient.getSession()).toBeNull()
+
+  // 新しいパスワードでログインでき、古いパスワードではログインできない
+  await signIn('alice@example.com', PASSWORD)
+  expect(await form('ログイン').findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.wrongCredentials)
+  await signIn('alice@example.com', NEW_PASSWORD)
+  await expectTodayScreen()
+})
+
+test('同じリンクをもう一度使うと、使えない旨を出し、再設定のメールを送る画面に移れる', async () => {
+  const authClient = createMemoryAuthClient()
+  const token = await memberWithResetToken(authClient)
+  await authClient.resetPassword(token, NEW_PASSWORD)
+  open(`#/reset/${token}`)
+  render(<App today={TODAY} authClient={authClient} />)
+
+  setNewPassword('another-password-789')
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'このリンクは、期限が切れているか、すでに使われています。もう一度、再設定のメールを送ってください',
+  )
+  expect(screen.queryByRole('form', { name: '新しいパスワード' })).not.toBeInTheDocument()
+
+  fireEvent.click(screen.getByRole('button', { name: '再設定のメールを送る' }))
+  expect(window.location.hash).toBe('#/forgot')
+})
+
+test('使えないリンクを開いた後、同じタブで別の有効なリンクを開くと、フォームが出て再設定できる', async () => {
+  const authClient = createMemoryAuthClient()
+  const token = await memberWithResetToken(authClient)
+  open('#/reset/broken-token')
+  render(<App today={TODAY} authClient={authClient} />)
+  setNewPassword(NEW_PASSWORD)
+  expect(await screen.findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.resetLinkUnusable)
+
+  window.location.hash = `#/reset/${token}`
+  expect(await screen.findByRole('form', { name: '新しいパスワード' })).toBeInTheDocument()
+  // 送信の前に、アドレスからトークンが消えている
+  await waitFor(() => expect(window.location.hash).toBe('#/reset'))
+  setNewPassword(NEW_PASSWORD)
+  expect(await screen.findByRole('status')).toHaveTextContent('パスワードを変更しました。ログインしてください')
+})
+
+test('期限切れ、正しくないリンクも、区別せず同じ表示になる', async () => {
+  const authClient = createMemoryAuthClient()
+  const token = await memberWithResetToken(authClient)
+  authClient.expireResetTokens()
+  const messages: string[] = []
+  for (const given of [token, 'broken-token']) {
+    open(`#/reset/${given}`)
+    const { unmount } = render(<App today={TODAY} authClient={authClient} />)
+    setNewPassword(NEW_PASSWORD)
+    messages.push((await screen.findByRole('alert')).textContent ?? '')
+    unmount()
+  }
+  expect(messages).toEqual([AUTH_MESSAGES.resetLinkUnusable, AUTH_MESSAGES.resetLinkUnusable])
+})
+
+test('読み込み直してトークンがなくなったとき（#/reset）は、「リンクをもう一度開いてください」と出し、フォームは出さない', () => {
+  open('#/reset')
+  render(<App today={TODAY} authClient={createMemoryAuthClient()} />)
+
+  expect(screen.getByRole('alert')).toHaveTextContent('リンクをもう一度開いてください')
+  expect(screen.queryByRole('form', { name: '新しいパスワード' })).not.toBeInTheDocument()
+})
+
+test.each([
+  ['8文字未満', '1234567', AUTH_MESSAGES.passwordTooShort],
+  ['空', '', AUTH_MESSAGES.emptyPassword],
+])('新しいパスワードが%sときは、日本語のエラーを出し、変更しない（リンクは使えるまま）', async (_, password, message) => {
+  const authClient = createMemoryAuthClient()
+  const token = await memberWithResetToken(authClient)
+  open(`#/reset/${token}`)
+  render(<App today={TODAY} authClient={authClient} />)
+
+  setNewPassword(password)
+  expect(await form('新しいパスワード').findByRole('alert')).toHaveTextContent(message)
+  expect(window.location.hash).toBe('#/reset')
+
+  // 変更されていないので、古いパスワードでログインでき、同じリンクで決め直せる
+  await authClient.signIn('alice@example.com', PASSWORD)
+  setNewPassword(NEW_PASSWORD)
+  expect(await screen.findByRole('status')).toHaveTextContent(AUTH_MESSAGES.passwordReset)
+})
+
+test('パスワードを再設定しても、メールアドレスの確認が済んだことにはならない', async () => {
+  const authClient = createMemoryAuthClient()
+  await authClient.signUp('alice@example.com', PASSWORD)
+  await authClient.requestPasswordReset('alice@example.com')
+  const token = authClient.mails.at(-1)?.token ?? ''
+  open(`#/reset/${token}`)
+  render(<App today={TODAY} authClient={authClient} />)
+
+  setNewPassword(NEW_PASSWORD)
+  expect(await screen.findByRole('status')).toHaveTextContent(AUTH_MESSAGES.passwordReset)
+  await signIn('alice@example.com', NEW_PASSWORD)
+  expect(await form('ログイン').findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.emailNotVerified)
+})
+
+test('新しいパスワードを送る回数の上限を超えたときは、日本語のエラーを出す', async () => {
+  const authClient = createMemoryAuthClient()
+  const token = await memberWithResetToken(authClient)
+  open(`#/reset/${token}`)
+  render(<App today={TODAY} authClient={authClient} />)
+
+  authClient.failNext(new AuthError(AUTH_MESSAGES.tooManyRequests))
+  setNewPassword(NEW_PASSWORD)
+  expect(await form('新しいパスワード').findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.tooManyRequests)
 })
 
 test.each([

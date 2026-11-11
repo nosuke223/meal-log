@@ -20,6 +20,16 @@ export interface AuthClient {
   signOut(): Promise<void>
   /** 確認のメールを送り直す（確認が済んでいない会員のときだけ届く。それ以外でも成功として扱う） */
   sendVerificationEmail(email: string): Promise<void>
+  /**
+   * パスワードの再設定のメールを送る。登録されていないメールアドレスでも、登録されているときと同じく成功する
+   * （登録の有無を外から探られないようにする）。確認が済んでいない会員にも送る
+   */
+  requestPasswordReset(email: string): Promise<void>
+  /**
+   * 再設定のメールのリンクのトークンで、新しいパスワードを決める。ログインした状態にはならない。
+   * 期限切れ、使用済み、正しくないトークンは ResetLinkError。成功したら、その会員のほかのログインは切れる
+   */
+  resetPassword(token: string, newPassword: string): Promise<void>
 }
 
 /** 登録やログインができなかったときのエラー。message は画面にそのまま出す日本語の説明 */
@@ -38,6 +48,14 @@ export class EmailNotVerifiedError extends AuthError {
   }
 }
 
+/** 再設定のメールのリンクが、期限切れ、使用済み、正しくないのいずれかで使えないときのエラー（区別しない） */
+export class ResetLinkError extends AuthError {
+  constructor() {
+    super(AUTH_MESSAGES.resetLinkUnusable)
+    this.name = 'ResetLinkError'
+  }
+}
+
 /**
  * 確認のメールのリンクを開いた結果。サーバー（server/memberAuth.ts）が、ログインの画面（#/login/<結果>）へ転送する
  *   verified      確認できた
@@ -52,6 +70,13 @@ export type EmailVerificationResult = (typeof EMAIL_VERIFICATION_RESULTS)[number
 
 export function isEmailVerificationResult(value: unknown): value is EmailVerificationResult {
   return (EMAIL_VERIFICATION_RESULTS as readonly unknown[]).includes(value)
+}
+
+/** ログインの画面（#/login/<結果>）に出す結果。確認のメールのリンクの結果と、パスワードを再設定した結果（password-reset） */
+export type LoginNotice = EmailVerificationResult | 'password-reset'
+
+export function isLoginNotice(value: unknown): value is LoginNotice {
+  return value === 'password-reset' || isEmailVerificationResult(value)
 }
 
 /** パスワードの最短の文字数（サーバーの server/memberAuth.ts と同じ） */
@@ -73,6 +98,11 @@ export const AUTH_MESSAGES = {
   linkExpired: '確認のリンクの有効期限が切れています。確認のメールを送り直してください',
   linkInvalid: '確認のリンクが正しくありません。確認のメールを送り直してください',
   linkError: 'メールアドレスを確認できませんでした。しばらく待ってから、もう一度リンクを開いてください',
+  resetRequested: '登録されているメールアドレスなら、再設定のメールを送りました。メールのリンクを開いてください',
+  passwordReset: 'パスワードを変更しました。ログインしてください',
+  resetLinkUnusable: 'このリンクは、期限が切れているか、すでに使われています。もう一度、再設定のメールを送ってください',
+  resetLinkMissing: 'リンクをもう一度開いてください',
+  emptyPassword: '新しいパスワードを入力してください',
   connectionFailed: 'サーバーに接続できませんでした。通信の状態を確かめてください',
   loginExpired: 'ログインの期限が切れました。ページを読み込み直してください',
   forbidden: 'このページからは受け付けられませんでした。ページを読み込み直してください',
@@ -88,6 +118,13 @@ export function checkCredentials(email: string, password: string, mode: 'signIn'
   if (email.trim() === '' || password === '') return AUTH_MESSAGES.emptyCredentials
   if (!EMAIL_PATTERN.test(email.trim())) return AUTH_MESSAGES.invalidEmail
   if (mode === 'signUp' && password.length < MIN_PASSWORD_LENGTH) return AUTH_MESSAGES.passwordTooShort
+  return null
+}
+
+/** 新しいパスワードを送る前に確かめる。問題があれば画面に出す説明、なければ null */
+export function checkNewPassword(password: string): string | null {
+  if (password === '') return AUTH_MESSAGES.emptyPassword
+  if (password.length < MIN_PASSWORD_LENGTH) return AUTH_MESSAGES.passwordTooShort
   return null
 }
 

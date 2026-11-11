@@ -7,6 +7,7 @@ import {
   AUTH_RATE_LIMITS,
   EMAIL_VERIFICATION_EXPIRES_IN,
   memberAuthOptions,
+  RESET_PASSWORD_EXPIRES_IN,
   TOO_MANY_REQUESTS_MESSAGE,
 } from './memberAuth'
 import { startTestDatabase, type TestDatabase } from './testDatabase'
@@ -343,6 +344,292 @@ describe('すでに登録されているメールアドレスでの登録', () =
     expect(mails[1].text).toContain('ログインするか、パスワードを再設定してください')
     expect(mails[1].text).toContain(`${ORIGIN}/#/login`)
     expect(mails[1].from).toBe(`meal-log <${MAIL_FROM}>`)
+  })
+})
+
+function requestReset(call: Call, email: string, options: CallOptions = {}) {
+  return call('POST', '/api/auth/request-password-reset', { body: { email }, ...options })
+}
+
+function resetPassword(call: Call, token: string, newPassword: string, options: CallOptions = {}) {
+  return call('POST', '/api/auth/reset-password', { body: { token, newPassword }, ...options })
+}
+
+const RESET_SUBJECT = '【meal-log】パスワードの再設定'
+
+/** 宛先が to の、最後の再設定のメールのリンクと、そのトークン */
+function resetLink(to: string): { link: string; token: string } {
+  const mail = mailsTo(to)
+    .filter((message) => message.subject === RESET_SUBJECT)
+    .at(-1)
+  if (mail === undefined) throw new Error('再設定のメールがありません')
+  const link = /https?:\/\/\S+\/#\/reset\/\S+/.exec(mail.text)?.[0]
+  if (link === undefined) throw new Error('再設定のメールにリンクがありません')
+  return { link, token: decodeURIComponent(link.slice(link.lastIndexOf('/') + 1)) }
+}
+
+describe('パスワードの再設定', () => {
+  it('登録されているメールアドレスに再設定のメールが届く（宛先、件名、リンクの形、有効期限、心当たりがないとき）', async () => {
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+
+    const response = await requestReset(call, 'Alice@Example.com')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+
+    const mails = mailsTo('alice@example.com').filter((mail) => mail.subject === RESET_SUBJECT)
+    expect(mails).toHaveLength(1)
+    expect(mails[0].from).toBe(`meal-log <${MAIL_FROM}>`)
+    const { link, token } = resetLink('alice@example.com')
+    // トークンは、サーバーの記録に残らないよう、ハッシュの中に入れる（?token= にしない）
+    expect(link).toMatch(new RegExp(`^${ORIGIN}/#/reset/[\\w-]+$`))
+    expect(link).not.toContain('?')
+    expect(token).not.toBe('')
+    expect(mails[0].html).toContain(`href="${link}"`)
+    expect(mails[0].text).toContain('有効期限は1時間')
+    expect(mails[0].text).toContain('このメールに心当たりがなければ、無視してください。パスワードは変わりません')
+    expect(mails[0].html).toContain('このメールに心当たりがなければ、無視してください。パスワードは変わりません')
+  })
+
+  it('登録されていないメールアドレスでも、同じ応答になり、メールは送らない', async () => {
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    const before = mailbox.messages.length
+
+    const known = await requestReset(call, 'alice@example.com')
+    const unknown = await requestReset(call, 'nobody@example.com')
+    expect(unknown.status).toBe(known.status)
+    expect(unknown.body).toEqual(known.body)
+    expect(unknown.cookie).toBe(known.cookie)
+    expect(mailbox.messages).toHaveLength(before + 1)
+    expect(mailsTo('nobody@example.com')).toHaveLength(0)
+  })
+
+  it('リンクで新しいパスワードを決めると、新しいパスワードでログインでき、古いパスワードではログインできない。リンクを開いた端末ではログインした状態にならない', async () => {
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    await requestReset(call, 'alice@example.com')
+    const { token } = resetLink('alice@example.com')
+
+    const reset = await resetPassword(call, token, 'brand-new-password')
+    expect(reset.status).toBe(200)
+    expect(reset.body).toEqual({ status: true })
+    expect(reset.cookie).toBe('')
+
+    expect((await signIn(call, 'alice@example.com', PASSWORD)).status).toBe(401)
+    const signedIn = await signIn(call, 'alice@example.com', 'brand-new-password')
+    expect(signedIn.status).toBe(200)
+    expect(await sessionEmail(call, signedIn.cookie)).toBe('alice@example.com')
+  })
+
+  it('再設定すると、その会員のほかの端末（別のセッション）のログインが切れる。ほかの会員は切れない', async () => {
+    const call = createClient()
+    const phone = await signUpAndSignIn(call, 'alice@example.com')
+    const laptop = await signIn(call, 'alice@example.com')
+    const bob = await signUpAndSignIn(call, 'bob@example.com')
+    expect(await count('session')).toBe(3)
+
+    await requestReset(call, 'alice@example.com')
+    expect((await resetPassword(call, resetLink('alice@example.com').token, 'brand-new-password')).status).toBe(200)
+
+    expect(await sessionEmail(call, phone.cookie)).toBeNull()
+    expect(await sessionEmail(call, laptop.cookie)).toBeNull()
+    expect(await sessionEmail(call, bob.cookie)).toBe('bob@example.com')
+  })
+
+  it('同じリンクは1回しか使えない。使えなかったときは 400（INVALID_TOKEN）で、パスワードは変わらない', async () => {
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    await requestReset(call, 'alice@example.com')
+    const { token } = resetLink('alice@example.com')
+
+    expect((await resetPassword(call, token, 'brand-new-password')).status).toBe(200)
+    const again = await resetPassword(call, token, 'another-new-password')
+    expect(again.status).toBe(400)
+    expect(again.body?.code).toBe('INVALID_TOKEN')
+    expect((await signIn(call, 'alice@example.com', 'brand-new-password')).status).toBe(200)
+    expect((await signIn(call, 'alice@example.com', 'another-new-password')).status).toBe(401)
+  })
+
+  it(`有効期限は1時間（${RESET_PASSWORD_EXPIRES_IN} 秒）。過ぎたリンクは使えず、少し前までは使える`, async () => {
+    expect(RESET_PASSWORD_EXPIRES_IN).toBe(60 * 60)
+    const start = new Date('2026-11-11T00:00:00Z')
+    vi.useFakeTimers({ toFake: ['Date'], now: start })
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    await requestReset(call, 'alice@example.com')
+    const first = resetLink('alice@example.com').token
+
+    vi.setSystemTime(start.getTime() + (RESET_PASSWORD_EXPIRES_IN + 1) * 1000)
+    const expired = await resetPassword(call, first, 'brand-new-password')
+    expect(expired.status).toBe(400)
+    expect(expired.body?.code).toBe('INVALID_TOKEN')
+    expect((await signIn(call, 'alice@example.com', PASSWORD)).status).toBe(200)
+
+    // 送り直したリンクは、1時間の少し前までは使える
+    await requestReset(call, 'alice@example.com', { ip: '203.0.113.99' })
+    const second = resetLink('alice@example.com').token
+    vi.setSystemTime(start.getTime() + (2 * RESET_PASSWORD_EXPIRES_IN + 1) * 1000 - 60_000)
+    expect((await resetPassword(call, second, 'brand-new-password')).status).toBe(200)
+  })
+
+  it('正しくないトークン（空、でたらめ）は 400（INVALID_TOKEN）', async () => {
+    const call = createClient()
+    for (const token of ['', 'not-a-token']) {
+      const response = await resetPassword(call, token, 'brand-new-password')
+      expect(response.status).toBe(400)
+      expect(response.body?.code).toBe('INVALID_TOKEN')
+    }
+  })
+
+  it('8文字未満のパスワードは 400（PASSWORD_TOO_SHORT）で、変更されず、リンクも使えるまま', async () => {
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    await requestReset(call, 'alice@example.com')
+    const { token } = resetLink('alice@example.com')
+
+    const short = await resetPassword(call, token, '1234567')
+    expect(short.status).toBe(400)
+    expect(short.body?.code).toBe('PASSWORD_TOO_SHORT')
+    expect((await signIn(call, 'alice@example.com', PASSWORD)).status).toBe(200)
+    expect((await resetPassword(call, token, '12345678')).status).toBe(200)
+  })
+
+  it('メールアドレスの確認が済んでいない会員にも送り、再設定できる。再設定しても確認は済まず、ログインには確認が必要なまま', async () => {
+    const call = createClient()
+    await signUp(call, 'alice@example.com')
+
+    expect((await requestReset(call, 'alice@example.com')).status).toBe(200)
+    const { token } = resetLink('alice@example.com')
+    expect((await resetPassword(call, token, 'brand-new-password')).status).toBe(200)
+
+    const signedIn = await signIn(call, 'alice@example.com', 'brand-new-password')
+    expect(signedIn.status).toBe(403)
+    expect(signedIn.body?.code).toBe('EMAIL_NOT_VERIFIED')
+    expect(signedIn.cookie).toBe('')
+
+    // 確認した後は、新しいパスワードでログインできる
+    expect((await openLink(call, verificationLink('alice@example.com'))).location).toBe(`${ORIGIN}/#/login/verified`)
+    expect((await signIn(call, 'alice@example.com', 'brand-new-password')).status).toBe(200)
+  })
+
+  it('MAIL_ALLOWED_TO と違う宛先には送らず、エラーにもしない。記録に宛先を出さない', async () => {
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {})
+    const call = createClient()
+    await signUp(call, 'alice@example.com')
+    const env = { MAIL_ALLOWED_TO: 'owner@example.com' }
+
+    const response = await requestReset(call, 'alice@example.com', { env })
+    expect(response.status).toBe(200)
+    expect(mailsTo('alice@example.com').filter((mail) => mail.subject === RESET_SUBJECT)).toHaveLength(0)
+    expect(JSON.stringify(info.mock.calls)).not.toContain('alice@example.com')
+  })
+
+  it('メールを送れなくても、登録の有無が分からないよう、応答は同じ（200）。記録に宛先と秘密の値を出さない', async () => {
+    const calls = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
+      vi.spyOn(console, method).mockImplementation(() => {}),
+    )
+    const failing: MailTransport = async () => {
+      throw new MailSendError('メールを送れませんでした（Resend: 500）')
+    }
+    const call = createClient({ mailTransport: failing })
+    await signUp(createClient(), 'alice@example.com')
+
+    const known = await requestReset(call, 'alice@example.com', { env: { RESEND_API_KEY: 're_test_secret_key' } })
+    const unknown = await requestReset(call, 'nobody@example.com', { env: { RESEND_API_KEY: 're_test_secret_key' } })
+    expect(known.status).toBe(200)
+    expect(known.body).toEqual(unknown.body)
+    const logs = JSON.stringify(calls.map((spy) => spy.mock.calls))
+    expect(logs).toContain('パスワード再設定のメールを送れなかった')
+    expect(logs).not.toContain('alice@example.com')
+    expect(logs).not.toContain('re_test_secret_key')
+  })
+
+  it('記録と応答にトークンとパスワードを出さない', async () => {
+    const calls = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
+      vi.spyOn(console, method).mockImplementation(() => {}),
+    )
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    await requestReset(call, 'alice@example.com')
+    const { token } = resetLink('alice@example.com')
+
+    const responses = [
+      await resetPassword(call, token, 'brand-new-password'),
+      await resetPassword(call, token, 'brand-new-password'),
+      await resetPassword(call, token, '1234567'),
+    ]
+    const logs = JSON.stringify(calls.map((spy) => spy.mock.calls))
+    for (const secret of [token, 'brand-new-password', PASSWORD, 'alice@example.com']) {
+      expect(logs).not.toContain(secret)
+      expect(JSON.stringify(responses.map((response) => response.body))).not.toContain(secret)
+    }
+  })
+})
+
+describe('パスワードの再設定の回数の上限', () => {
+  it(`再設定のメールは、同じメールアドレスと同じ IP アドレスからは、${MAIL_RATE_LIMIT.window} 秒の間に ${MAIL_RATE_LIMIT.max} 回を超えると 429 で、送らない。登録されていないアドレスも同じ`, async () => {
+    const call = createClient()
+    const ip = '203.0.113.80'
+    await signUp(call, 'alice@example.com', PASSWORD, { ip: '203.0.113.81' })
+    for (const email of ['alice@example.com', 'nobody@example.com']) {
+      for (let attempt = 0; attempt < MAIL_RATE_LIMIT.max; attempt++) {
+        expect((await requestReset(call, email, { ip })).status).toBe(200)
+      }
+      const limited = await requestReset(call, email, { ip })
+      expect(limited.status).toBe(429)
+      expect(limited.body).toEqual({
+        code: 'TOO_MANY_MAIL_REQUESTS',
+        message: 'メールを送る回数の上限を超えました。しばらく待ってから、もう一度試してください',
+      })
+      expect(Number(limited.headers.get('Retry-After'))).toBeGreaterThan(0)
+    }
+    expect(mailsTo('alice@example.com').filter((mail) => mail.subject === RESET_SUBJECT)).toHaveLength(MAIL_RATE_LIMIT.max)
+    // 別の IP アドレスからは送れる
+    expect((await requestReset(call, 'alice@example.com', { ip: '203.0.113.82' })).status).toBe(200)
+  })
+
+  it(`再設定のメールを送る入口は、同じ IP アドレスから ${AUTH_RATE_LIMITS['/request-password-reset'].max} 回を超えると 429`, async () => {
+    const call = createClient()
+    const { max } = AUTH_RATE_LIMITS['/request-password-reset']
+    for (let attempt = 0; attempt < max; attempt++) {
+      expect((await requestReset(call, `user${attempt}@example.com`, { ip: '203.0.113.85' })).status).toBe(200)
+    }
+    const limited = await requestReset(call, 'one-more@example.com', { ip: '203.0.113.85' })
+    expect(limited.status).toBe(429)
+    expect(limited.body?.message).toBe(TOO_MANY_REQUESTS_MESSAGE)
+  })
+
+  it(`新しいパスワードの入口は、同じ IP アドレスから ${AUTH_RATE_LIMITS['/reset-password'].max} 回を超えると 429 で、正しいトークンでも拒否される`, async () => {
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    await requestReset(call, 'alice@example.com')
+    const { token } = resetLink('alice@example.com')
+    const { max } = AUTH_RATE_LIMITS['/reset-password']
+
+    for (let attempt = 0; attempt < max; attempt++) {
+      expect((await resetPassword(call, 'wrong-token', 'brand-new-password', { ip: '203.0.113.90' })).status).toBe(400)
+    }
+    const limited = await resetPassword(call, token, 'brand-new-password', { ip: '203.0.113.90' })
+    expect(limited.status).toBe(429)
+    expect(limited.body).toEqual({ code: 'TOO_MANY_REQUESTS', message: TOO_MANY_REQUESTS_MESSAGE })
+    expect((await signIn(call, 'alice@example.com', PASSWORD)).status).toBe(200)
+
+    // 別の IP アドレスからは決められる
+    expect((await resetPassword(call, token, 'brand-new-password', { ip: '203.0.113.91' })).status).toBe(200)
+  })
+
+  it('他のオリジンからの再設定は 403 で、メールも送らず、パスワードも変えない', async () => {
+    const call = createClient()
+    await signUpAndSignIn(call, 'alice@example.com')
+    await requestReset(call, 'alice@example.com')
+    const { token } = resetLink('alice@example.com')
+    const before = mailbox.messages.length
+
+    expect((await requestReset(call, 'alice@example.com', { origin: 'https://evil.example' })).status).toBe(403)
+    expect((await resetPassword(call, token, 'brand-new-password', { origin: 'https://evil.example' })).status).toBe(403)
+    expect(mailbox.messages).toHaveLength(before)
+    expect((await signIn(call, 'alice@example.com', PASSWORD)).status).toBe(200)
   })
 })
 
