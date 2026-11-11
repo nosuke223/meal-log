@@ -132,10 +132,19 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     onBack: () => navigate(todayHash()),
   }
   if (route.screen === 'login') {
-    return <LoginScreen {...authScreenProps} onSignedIn={() => navigate(todayHash())} onOpenSignup={() => navigate(signupHash())} />
+    return (
+      <LoginScreen
+        {...authScreenProps}
+        // 確認のメールのリンクの結果が変わったら、入力と表示を初めからにする
+        key={route.verification ?? ''}
+        verification={route.verification}
+        onSignedIn={() => navigate(todayHash())}
+        onOpenSignup={() => navigate(signupHash())}
+      />
+    )
   }
   if (route.screen === 'signup') {
-    return <SignupScreen {...authScreenProps} onSignedUp={() => navigate(todayHash())} onOpenLogin={() => navigate(loginHash())} />
+    return <SignupScreen {...authScreenProps} onOpenLogin={() => navigate(loginHash())} />
   }
   if (route.screen === 'account') {
     return (

@@ -1,4 +1,4 @@
-import { AUTH_MESSAGES, AuthError, type AuthClient, type Member } from './authClient'
+import { AUTH_MESSAGES, AuthError, EmailNotVerifiedError, type AuthClient, type Member } from './authClient'
 
 export type ApiAuthClientOptions = {
   /** API を呼ぶのに使う。テストで差し替える */
@@ -10,12 +10,12 @@ export type ApiAuthClientOptions = {
 /** ログインの API（Better Auth。server/memberAuth.ts）の、エラーの code ごとの説明 */
 const MESSAGES_BY_CODE: Record<string, string> = {
   INVALID_EMAIL_OR_PASSWORD: AUTH_MESSAGES.wrongCredentials,
-  USER_ALREADY_EXISTS: AUTH_MESSAGES.alreadyRegistered,
-  USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL: AUTH_MESSAGES.alreadyRegistered,
   PASSWORD_TOO_SHORT: AUTH_MESSAGES.passwordTooShort,
   PASSWORD_TOO_LONG: AUTH_MESSAGES.passwordTooLong,
   INVALID_EMAIL: AUTH_MESSAGES.invalidEmail,
   TOO_MANY_REQUESTS: AUTH_MESSAGES.tooManyRequests,
+  // メールを送る回数の上限（server/memberAuth.ts）
+  TOO_MANY_MAIL_REQUESTS: AUTH_MESSAGES.tooManyMails,
 }
 
 /** サーバーのログインの API を呼ぶ窓口を作る */
@@ -45,28 +45,28 @@ export function createApiAuthClient(options: ApiAuthClientOptions = {}): AuthCli
     return data
   }
 
-  async function signInOrUp(path: string, body: Record<string, string>): Promise<Member> {
-    const member = memberOf(await call('POST', path, body))
-    if (member === null) throw new AuthError('ログインの API の応答が正しくありません')
-    return member
-  }
-
   return {
     async getSession() {
       return memberOf(await call('GET', '/get-session'))
     },
 
-    signUp(email, password) {
+    async signUp(email, password) {
       // 名前は使わない（Better Auth が必須にしているので、空で送る）
-      return signInOrUp('/sign-up/email', { email: email.trim(), password, name: '' })
+      await call('POST', '/sign-up/email', { email: email.trim(), password, name: '' })
     },
 
-    signIn(email, password) {
-      return signInOrUp('/sign-in/email', { email: email.trim(), password })
+    async signIn(email, password) {
+      const member = memberOf(await call('POST', '/sign-in/email', { email: email.trim(), password }))
+      if (member === null) throw new AuthError('ログインの API の応答が正しくありません')
+      return member
     },
 
     async signOut() {
       await call('POST', '/sign-out')
+    },
+
+    async sendVerificationEmail(email) {
+      await call('POST', '/send-verification-email', { email: email.trim() })
     },
   }
 }
@@ -94,8 +94,9 @@ function memberOf(data: unknown): Member | null {
 function errorOf(status: number, data: unknown): AuthError {
   const body = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {}
   const code = typeof body.code === 'string' ? body.code : null
-  if (status === 429) return new AuthError(AUTH_MESSAGES.tooManyRequests)
+  if (code === 'EMAIL_NOT_VERIFIED') return new EmailNotVerifiedError()
   if (code !== null && code in MESSAGES_BY_CODE) return new AuthError(MESSAGES_BY_CODE[code])
+  if (status === 429) return new AuthError(AUTH_MESSAGES.tooManyRequests)
   if (status === 403) return new AuthError(AUTH_MESSAGES.forbidden)
   // 入力の形の検査（Better Auth の VALIDATION_ERROR など）。画面で先に確かめるので、ふつうはメールアドレスの形
   if (status === 400) return new AuthError(AUTH_MESSAGES.invalidEmail)

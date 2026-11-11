@@ -41,10 +41,24 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 
 - アカウントの画面（記録の画面の「アカウント」ボタン）: ログイン中のメールアドレスと「ログアウト」を出す。ログインしていなければ、ログインの画面を出す
 - ログインの画面: メールアドレスとパスワードを入れて「ログイン」。ログインしたら、今日の記録の画面に移る。「会員登録へ」で会員登録の画面に移る
-- 会員登録の画面: メールアドレスとパスワード（8文字以上）を入れて「登録する」。登録すると、そのままログインした状態になり、今日の記録の画面に移る
-- メールアドレスは大文字と小文字を区別しない（小文字にそろえて保存する）。メールの確認はまだ求めない
-- 入力のエラー（パスワードが短い、メールアドレスの形が違う、パスワードが違う、すでに登録されている、試す回数の上限を超えた）は、フォームの上に日本語で出す
+- 会員登録の画面: メールアドレスとパスワード（8文字以上）を入れて「登録する」。登録すると「確認のメールを送りました。メールのリンクを開いてください」と出る（ログインした状態にはならない）
+- メールアドレスは大文字と小文字を区別しない（小文字にそろえて保存する）
+- 入力のエラー（パスワードが短い、メールアドレスの形が違う、パスワードが違う、試す回数の上限を超えた）は、フォームの上に日本語で出す
 - 画面からログインの API を呼ぶ部分は `src/auth/`（窓口 `AuthClient`）にまとめている。画面のテストでは、メモリーの中だけで動く窓口（`src/auth/memoryAuthClient.ts`）に差し替える
+
+### 登録とログインの流れ（メールアドレスの確認）
+
+会員登録したメールアドレスが本人のものであることを、メールで確かめます。確認が済むまで、ログインできません。
+
+1. 会員登録の画面で登録すると、確認のメール（件名「【meal-log】メールアドレスの確認」）が届く
+2. メールのリンクを開くと、確認でき、ログインの画面（`#/login/verified`）に移って「メールアドレスを確認できました。ログインしてください」と出る。リンクを開いた端末では、ログインした状態にならない
+3. ログインの画面でログインする
+
+- リンクの有効期限は24時間。リンクは1回だけ使える（同じリンクをもう一度開くと「すでに使われています」と出る）
+- 期限切れ、使用済み、正しくないリンクを開いたときは、ログインの画面にその旨を出し、メールアドレスを入れて「確認のメールをもう一度送る」で送り直せる
+- 確認前にログインしようとすると「メールアドレスの確認が済んでいません」と出て、「確認のメールをもう一度送る」ボタンが出る
+- すでに登録されているメールアドレスで登録しようとしても、登録できたときと同じ表示になる（登録の有無を外から探られないようにする）。そのアドレスには「すでに登録されています。ログインするか、パスワードを再設定してください」というメールが届く
+- メールを送る回数には上限がある（同じメールアドレスと同じ接続元から、10分に3回まで）。超えると「メールを送る回数の上限を超えました。…」と出る
 
 ## 予定と食べた
 
@@ -148,6 +162,7 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 | `#/calendar/YYYY-MM` | その月のカレンダー（今月なら今日を選び、ほかの月は何も選ばない）。不正な月のときは今月（今日を選んだ状態） |
 | `#/data` | データ画面（書き出し・読み込み） |
 | `#/login` | ログインの画面 |
+| `#/login/<結果>` | 確認のメールのリンクを開いた結果を出したログインの画面（API が転送する）。結果は `verified`（確認できた）、`link-used`（使用済み）、`link-expired`（期限切れ）、`link-invalid`（正しくない）、`link-error`（サーバーのエラー）。知らない結果は、ただのログインの画面 |
 | `#/signup` | 会員登録の画面 |
 | `#/account` | アカウントの画面（ログインしていなければ、ログインの画面） |
 
@@ -192,9 +207,10 @@ npm run dev
 
 - `/api/` 以下は、開発サーバーの中で API（`server/api.ts`）が処理する（`server/devApi.ts`。Vite のプラグイン）。保存先は手元の D1（`.wrangler/` の下。`npm run dev:api` と同じ）
 - 認証は省き、`dev@example.com` の人として扱う（下の「認証」の `DEV_USER_EMAIL`）
+- メールは実際には送らず、開発サーバーの中にためる（起動し直すと消える）。ためたメールは <http://localhost:5173/__dev/mails?to=<宛先のメールアドレス>> で読める（JSON。e2e は、ここから確認のメールのリンクを読んで開く）。送信元は `onboarding@resend.dev`
 - この仕組みは開発サーバーだけのもの。`npm run build` の出力と、本番の API（`functions/`）には入らないので、本番では必ず Access の認証を通る
 - 手元の D1 の設定は `wrangler.dev.jsonc` にある（手元とテスト専用。本番の D1 のデータベース ID は書かない）。名前を `wrangler.toml` などにすると、Pages の本番の設定として読まれるので、変えない
-- 本番に近い形（Pages Functions の実行環境）で確かめるときは `npm run dev:api`（画面をビルドし、`wrangler pages dev` で画面と API を起動する。画面のファイルを変えたら、起動し直す）
+- 本番に近い形（Pages Functions の実行環境）で確かめるときは `npm run dev:api`（画面をビルドし、`wrangler pages dev` で画面と API を起動する。画面のファイルを変えたら、起動し直す）。`npm run dev:api` には、メールをためる仕組みがなく、メールの環境変数も設定しないので、会員登録と確認のメールの送り直しは 500（`MailConfigurationError`）になる
 
 ### 画面を操作するテスト（e2e）の記録
 
@@ -324,19 +340,45 @@ curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json'
 
 | 操作 | メソッドとアドレス | リクエストの本文 | 成功したときの応答 |
 | --- | --- | --- | --- |
-| 会員登録 | `POST /api/auth/sign-up/email` | `{ "email": "…", "password": "…", "name": "" }` | 200 `{ "user": { "email": "…", … }, … }`。セッションの cookie を出す（そのままログインした状態） |
-| ログイン | `POST /api/auth/sign-in/email` | `{ "email": "…", "password": "…" }` | 200 `{ "user": { "email": "…", … }, … }`。セッションの cookie を出す |
+| 会員登録 | `POST /api/auth/sign-up/email` | `{ "email": "…", "password": "…", "name": "" }` | 200 `{ "token": null, "user": { "email": "…", … } }`。確認のメールを送る。cookie は出さない（ログインした状態にしない）。すでに登録されているメールアドレスでも同じ形の 200 で、そのアドレスに「すでに登録されています」のメールを送る |
+| 確認のメールのリンク | `GET /api/auth/verify-email?token=…` | なし | 303 で、ログインの画面（`/#/login/<結果>`）へ転送する。cookie は出さない（リンクを開いた端末ではログインした状態にしない） |
+| 確認のメールの送り直し | `POST /api/auth/send-verification-email` | `{ "email": "…" }` | 200 `{ "status": true }`。確認が済んでいない会員のときだけ送る（登録されていない、確認済みのときも同じ応答） |
+| ログイン | `POST /api/auth/sign-in/email` | `{ "email": "…", "password": "…" }` | 200 `{ "user": { "email": "…", … }, … }`。セッションの cookie を出す。確認が済んでいないときは 403 `EMAIL_NOT_VERIFIED` |
 | ログアウト | `POST /api/auth/sign-out` | `{}` | 200。セッションを D1 から消し、cookie を消す |
 | ログイン中の会員 | `GET /api/auth/get-session` | なし | 200 `{ "user": …, "session": … }`。ログインしていなければ `null` |
 
 - マイグレーションを当てた後、Access の JWT の確かめより前に処理する（`/api/health` と同じ位置）。Access を外した公開の後も動くようにするため。Access の JWT がなくても動く
 - 認証の初期化は `/api/auth/` に来たときだけ行う。`BETTER_AUTH_SECRET` がないときは 500（`AuthConfigurationError`）。ほかの API には影響しない
 - ログインの cookie だけでは、記録の API（`/api/meals` など）は使えない（記録は、まだ Access のログインで読み書きする）
-- パスワードは8文字以上。メールアドレスは小文字にそろえる。メールの確認は求めない
+- パスワードは8文字以上。メールアドレスは小文字にそろえる。メールアドレスの確認が済むまで、ログインできない（上の「登録とログインの流れ」）
+- 確認のメールのリンクは、API のアドレス（`/api/auth/verify-email?token=…`）。画面のアドレスはハッシュ（`#/…`）なので、トークンはクエリにして API で受け取り、確認の結果をハッシュのアドレス（`/#/login/<結果>`）にして転送する。トークンは、Better Auth が秘密の値 `BETTER_AUTH_SECRET` で署名したもの（有効期限は24時間）。使用済みかどうかは、確かめる前に、その会員が確認済みだったかで見分ける
 - 基準のアドレス（オリジン）は、リクエストのアドレスから決める（プレビューは公開ごとにアドレスが変わるため）。ほかのオリジンからのリクエスト（`Origin` がない cookie 付きのリクエストも）は 403
 - セッションの cookie には `HttpOnly`、`SameSite=Lax` を付け、`https` のときは `Secure` も付ける（手元の `http` では付けない）
-- 試す回数の上限（総当たりを防ぐ）: IP アドレス（`CF-Connecting-IP`）ごとに、登録とログインは10分に10回、ログアウトは10分に30回、ほかは1分に100回まで（`server/memberAuth.ts` の `AUTH_RATE_LIMITS`）。超えると 429 `{ "code": "TOO_MANY_REQUESTS", "message": "試す回数の上限を超えました。…" }`（`Retry-After` に待つ秒数）。数えた値は D1 の表 `rateLimit` に保存する
-- エラーの応答は Better Auth の形（`{ "code": "…", "message": "…" }`）。例: パスワードが違う・存在しないメールアドレスは 401 `INVALID_EMAIL_OR_PASSWORD`、登録済みは 422、パスワードが短い・メールアドレスの形が違うは 400。画面は `code` から日本語の説明を出す（`src/auth/apiAuthClient.ts`）
+- 試す回数の上限（総当たりを防ぐ）: IP アドレス（`CF-Connecting-IP`）ごとに、登録、ログイン、確認のメールの送り直しは10分に10回、ログアウトは10分に30回、ほかは1分に100回まで（`server/memberAuth.ts` の `AUTH_RATE_LIMITS`）。超えると 429 `{ "code": "TOO_MANY_REQUESTS", "message": "試す回数の上限を超えました。…" }`（`Retry-After` に待つ秒数）。数えた値は D1 の表 `rateLimit` に保存する
+- メールを送る回数の上限: 会員登録と確認のメールの送り直しは、同じ宛先のメールアドレスと同じ IP アドレスの組み合わせごとに、10分に3回まで（`server/mail/mailRateLimit.ts` の `MAIL_RATE_LIMIT`）。登録の有無を探られないよう、実際に送るかどうかに関係なく数える。超えると 429 `{ "code": "TOO_MANY_MAIL_REQUESTS", "message": "メールを送る回数の上限を超えました。…" }`。数えた値は同じ表 `rateLimit` に、`key` を `mail:` で始めて保存する（宛先のメールアドレスは SHA-256 のハッシュにして入れる）
+- エラーの応答は Better Auth の形（`{ "code": "…", "message": "…" }`）。例: パスワードが違う・存在しないメールアドレスは 401 `INVALID_EMAIL_OR_PASSWORD`、確認が済んでいないは 403 `EMAIL_NOT_VERIFIED`、パスワードが短い・メールアドレスの形が違うは 400。画面は `code` から日本語の説明を出す（`src/auth/apiAuthClient.ts`）
+- メールを送れなかったときは、API のエラーの形（下の「エラー」）の 500 にする: メールの環境変数が足りないときは `MailConfigurationError`、Resend が失敗を返したときは `MailSendError`。どちらも、秘密の値と宛先のメールアドレスは、応答と記録に出さない
+
+### メールの部品（`server/mail/`）
+
+メールは Resend（<https://resend.com>）の API（`https://api.resend.com/emails`）を `fetch` で呼んで送ります（SDK は使わない）。Better Auth からは、この部品を通してだけ送ります。
+
+- `server/mail/mailer.ts`: メールを送る部品（`createMailer`）。送る部分（`MailTransport`）は差し替えられる。本番とプレビューは Resend（`createResendTransport`）、テストと手元の開発サーバーは偽物（メモリーにためる）
+- 送信元は `meal-log <MAIL_FROM の値>`（表示名は meal-log）
+- `MAIL_ALLOWED_TO` があって、宛先が違うときは、送らず、エラーにもしない（画面は送ったときと同じ）。記録には「送り先が許可されていないので送らなかった」とだけ残し、宛先は出さない
+- `server/mail/mailRateLimit.ts`: メールを送る回数の上限
+
+#### メールの文面
+
+文面は `server/mail/templates/` にあります。文字だけの版（`text`）と、簡単な HTML の版（`html`）を、1つのファイルに書きます（共通の HTML の枠は `layout.ts`）。直すときは、このファイルを直します。
+
+| ファイル | 送るとき | 件名 |
+| --- | --- | --- |
+| `verifyEmail.ts` | 会員登録したとき、確認のメールを送り直したとき | 【meal-log】メールアドレスの確認 |
+| `alreadyRegistered.ts` | すでに登録されているメールアドレスで、会員登録しようとしたとき | 【meal-log】このメールアドレスはすでに登録されています |
+
+- どのメールにも「このメールに心当たりがなければ、無視してください」と書く
+- HTML の版に入れる値（リンクなど）は `escapeHtml` を通す
 - 応答には `Cache-Control: no-store` を付ける
 - Better Auth は Node.js の `AsyncLocalStorage` を使うので、Pages の互換性フラグ `nodejs_compat` が要る（手元は `wrangler.dev.jsonc` と `npm run dev:api`。本番とプレビューは `docs/deploy.md`）
 
@@ -356,6 +398,8 @@ curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json'
 | 500 | `AuthConfigurationError` | 認証の環境変数が足りない・不正、Access の公開鍵を取得できない |
 | 500 | `DatabaseNotConfigured` | D1 がつながっていない（Pages の設定で、D1 を `DB` の名前でつないでいない） |
 | 500 | `MigrationError` | 表の変更（マイグレーション）を当てられなかった（詳しい内容は応答に出さず、サーバーのログに残す） |
+| 500 | `MailConfigurationError` | メールの環境変数（`RESEND_API_KEY`、`MAIL_FROM`）が足りないので、メールを送れない（会員登録、確認のメールの送り直し） |
+| 500 | `MailSendError` | Resend がメールの送信に失敗を返した、または Resend に接続できない（`message` には Resend の状態コードだけを入れる） |
 
 `DatabaseNotConfigured` と `MigrationError` は、認証より前に確かめるので、ログインしていなくても返ります。
 
@@ -376,12 +420,17 @@ Cloudflare Access が付けるヘッダー `Cf-Access-Jwt-Assertion` の JWT を
 | `ACCESS_AUD` | Access のアプリケーションの AUD タグ | 設定する |
 | `DEV_USER_EMAIL` | 手元の開発とテスト専用。設定すると JWT を検証せず、このメールアドレスの人として扱う | **本番に設定しない** |
 | `BETTER_AUTH_SECRET` | 会員のログイン（Better Auth）が、セッションなどの署名に使う秘密の値（推測されにくい長いランダムな文字列） | 設定する（秘密の値として。本番とプレビューで別の値） |
+| `RESEND_API_KEY` | メールを送る Resend の API キー（`re_…`）。秘密の値 | ドメインを取った後に設定する（公開の準備の Issue）。プレビューには設定する |
+| `MAIL_FROM` | メールの送信元のアドレス（例: `onboarding@resend.dev`）。表示名は meal-log になる | ドメインを取った後に、そのドメインのアドレスを設定する。プレビューは `onboarding@resend.dev` |
+| `MAIL_ALLOWED_TO` | 任意（プレビュー用）。設定すると、このアドレスにしかメールを送らない（カンマで区切って複数書ける）。ほかの宛先は、送らずに記録だけ残す | **本番に設定しない**（設定すると、所有者以外にメールが届かなくなる） |
 
 - `DEV_USER_EMAIL` が設定されていない（空も含む）ときは、必ず JWT を検証する。本番に設定すると、誰でもその人として記録を読み書きできてしまうので、絶対に設定しない
 - 手元では、`npm run dev`（`server/devApi.ts`）と `npm run dev:api`（コマンドの `--binding`）が、起動するときだけ設定する。リポジトリの設定ファイル（`wrangler.dev.jsonc` など）には書かない
 - 本番の値（D1 のデータベース ID、チーム名、AUD タグ、`BETTER_AUTH_SECRET`）は、リポジトリに書かず、Cloudflare 側で設定する（`docs/deploy.md`）
 - `BETTER_AUTH_SECRET` がないときは、`/api/auth/` 以下だけが 500（`AuthConfigurationError`）になる。`/api/meals` など記録の API は、なくても動く
 - 手元では、`npm run dev`（`server/devApi.ts` の `DEV_BETTER_AUTH_SECRET`）と `npm run dev:api`（コマンドの `--binding`）が、起動するときだけ開発専用の値を設定する。`DEV_USER_EMAIL` と同じく、設定ファイルには書かない
+- `RESEND_API_KEY` か `MAIL_FROM` がないときは、メールを送るとき（会員登録、確認のメールの送り直し）だけ 500（`MailConfigurationError`）になる。ほかの API は、なくても動く
+- 手元の `npm run dev` は、メールを送らずにためるので、`RESEND_API_KEY` は要らない（`MAIL_FROM` は `server/devApi.ts` の `DEV_MAIL_FROM` を起動するときだけ設定する）
 
 ### D1 の表
 

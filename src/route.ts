@@ -4,9 +4,12 @@
 //   #/calendar/YYYY-MM その月のカレンダー（今月なら今日を選んだ状態、ほかの月は何も選ばない）
 //   #/data             データ（書き出し・読み込み）の画面
 //   #/login            ログインの画面
+//   #/login/<結果>      確認のメールのリンクを開いた結果を出した、ログインの画面（結果は EmailVerificationResult。
+//                      サーバーが転送する。知らない結果は、ただのログインの画面にする）
 //   #/signup           会員登録の画面
 //   #/account          アカウントの画面（ログインしていなければ、ログインの画面）
 //   それ以外（空を含む） 今日の記録の画面
+import { isEmailVerificationResult, type EmailVerificationResult } from './auth/authClient'
 import { isValidMonth, monthOf } from './calendar/calendarMonth'
 import { isValidDate } from './meals/mealRecord'
 
@@ -16,7 +19,8 @@ export type Route =
   /** selected は選んだ日（YYYY-MM-DD）。null は何も選んでいない */
   | { screen: 'calendar'; month: string; selected: string | null }
   | { screen: 'data' }
-  | { screen: 'login' }
+  /** verification は、確認のメールのリンクを開いた結果。なければ null */
+  | { screen: 'login'; verification: EmailVerificationResult | null }
   | { screen: 'signup' }
   | { screen: 'account' }
 
@@ -33,7 +37,10 @@ export function parseHash(hash: string, today: string): Route {
     const month = isValidMonth(value) ? value : monthOf(today)
     return { screen: 'calendar', month, selected: month === monthOf(today) ? today : null }
   }
-  if (screen === 'data' || screen === 'login' || screen === 'signup' || screen === 'account') {
+  if (screen === 'login') {
+    return { screen, verification: isEmailVerificationResult(value) ? value : null }
+  }
+  if (screen === 'data' || screen === 'signup' || screen === 'account') {
     return { screen }
   }
   if (screen === 'day' && isValidDate(value)) {
@@ -64,8 +71,9 @@ export function dataHash(): string {
   return '#/data'
 }
 
-export function loginHash(): string {
-  return '#/login'
+/** ログインの画面。verification を付けると、確認のメールのリンクを開いた結果を出す */
+export function loginHash(verification?: EmailVerificationResult): string {
+  return verification === undefined ? '#/login' : `#/login/${verification}`
 }
 
 export function signupHash(): string {

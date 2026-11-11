@@ -49,12 +49,28 @@ test('記録の画面のヘッダーの「アカウント」で、アカウン�
   expect(screen.getByRole('form', { name: 'ログイン' })).toBeInTheDocument()
 })
 
-test('会員登録すると、ログインした状態で今日の記録の画面に移り、アカウントの画面にメールアドレスとログアウトが出る', async () => {
+test('会員登録すると、確認のメールを送ったことを出し、ログインした状態にはならない', async () => {
+  const authClient = createMemoryAuthClient()
   open('#/signup')
-  render(<App today={TODAY} />)
+  render(<App today={TODAY} authClient={authClient} />)
   expect(screen.getByRole('heading', { name: '会員登録' })).toBeInTheDocument()
 
   await signUp('Alice@Example.com')
+  expect(await screen.findByRole('status')).toHaveTextContent('確認のメールを送りました。メールのリンクを開いてください')
+  expect(screen.queryByRole('form', { name: '会員登録' })).not.toBeInTheDocument()
+  expect(window.location.hash).toBe('#/signup')
+  expect(await authClient.getSession()).toBeNull()
+  expect(authClient.mails).toEqual([{ to: 'alice@example.com', kind: 'verification' }])
+})
+
+test('確認した後にログインすると、今日の記録の画面に移り、アカウントの画面にメールアドレスとログアウトが出る', async () => {
+  const authClient = createMemoryAuthClient()
+  await authClient.signUp('alice@example.com', PASSWORD)
+  authClient.verify('alice@example.com')
+  open('#/login/verified')
+  render(<App today={TODAY} authClient={authClient} />)
+
+  await signIn('alice@example.com')
   await expectTodayScreen()
 
   fireEvent.click(screen.getByRole('button', { name: 'アカウント' }))
@@ -63,9 +79,84 @@ test('会員登録すると、ログインした状態で今日の記録の画�
   expect(screen.getByRole('button', { name: 'ログアウト' })).toBeInTheDocument()
 })
 
+test('確認前にログインしようとすると、「メールアドレスの確認が済んでいません」と出し、確認のメールを送り直せる', async () => {
+  const authClient = createMemoryAuthClient()
+  await authClient.signUp('alice@example.com', PASSWORD)
+  open('#/login')
+  render(<App today={TODAY} authClient={authClient} />)
+
+  await signIn('Alice@example.com')
+  expect(await form('ログイン').findByRole('alert')).toHaveTextContent('メールアドレスの確認が済んでいません')
+  expect(window.location.hash).toBe('#/login')
+  expect(await authClient.getSession()).toBeNull()
+
+  fireEvent.click(form('ログイン').getByRole('button', { name: '確認のメールをもう一度送る' }))
+  expect(await form('ログイン').findByRole('status')).toHaveTextContent('確認のメールを送りました。メールのリンクを開いてください')
+  expect(authClient.mails).toHaveLength(2)
+  expect(authClient.mails[1]).toEqual({ to: 'alice@example.com', kind: 'verification' })
+})
+
+test('確認のメールを送り直せなかったときは、日本語のエラーを出す', async () => {
+  const authClient = createMemoryAuthClient()
+  await authClient.signUp('alice@example.com', PASSWORD)
+  open('#/login')
+  render(<App today={TODAY} authClient={authClient} />)
+  await signIn('alice@example.com')
+  const button = await form('ログイン').findByRole('button', { name: '確認のメールをもう一度送る' })
+
+  authClient.failNext(new AuthError(AUTH_MESSAGES.tooManyMails))
+  fireEvent.click(button)
+  expect(await screen.findByText(AUTH_MESSAGES.tooManyMails)).toBeInTheDocument()
+  expect(authClient.mails).toHaveLength(1)
+})
+
+test('パスワードが違うときは、確認の前でも、送り直しのボタンを出さない', async () => {
+  const authClient = createMemoryAuthClient()
+  await authClient.signUp('alice@example.com', PASSWORD)
+  open('#/login')
+  render(<App today={TODAY} authClient={authClient} />)
+
+  await signIn('alice@example.com', 'wrong-password')
+  expect(await screen.findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.wrongCredentials)
+  expect(screen.queryByRole('button', { name: '確認のメールをもう一度送る' })).not.toBeInTheDocument()
+})
+
+test('確認のメールのリンクで確認できたときは、ログインの画面に「メールアドレスを確認できました。ログインしてください」と出す', () => {
+  open('#/login/verified')
+  render(<App today={TODAY} authClient={createMemoryAuthClient()} />)
+
+  expect(screen.getByRole('heading', { name: 'ログイン' })).toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent('メールアドレスを確認できました。ログインしてください')
+  expect(screen.getByRole('form', { name: 'ログイン' })).toBeInTheDocument()
+  expect(screen.queryByRole('form', { name: '確認のメールの送り直し' })).not.toBeInTheDocument()
+})
+
+test.each([
+  ['#/login/link-expired', AUTH_MESSAGES.linkExpired],
+  ['#/login/link-used', AUTH_MESSAGES.linkUsed],
+  ['#/login/link-invalid', AUTH_MESSAGES.linkInvalid],
+])('%s のときは、その旨を出し、メールアドレスを入れて確認のメールを送り直せる', async (hash, message) => {
+  const authClient = createMemoryAuthClient()
+  await authClient.signUp('alice@example.com', PASSWORD)
+  open(hash)
+  render(<App today={TODAY} authClient={authClient} />)
+
+  expect(screen.getByRole('alert')).toHaveTextContent(message)
+  const resendForm = form('確認のメールの送り直し')
+  fireEvent.click(resendForm.getByRole('button', { name: '確認のメールをもう一度送る' }))
+  expect(await resendForm.findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.emptyEmail)
+
+  fireEvent.change(resendForm.getByLabelText('メールアドレス'), { target: { value: 'alice@example.com' } })
+  fireEvent.click(resendForm.getByRole('button', { name: '確認のメールをもう一度送る' }))
+  expect(await resendForm.findByRole('status')).toHaveTextContent('確認のメールを送りました。メールのリンクを開いてください')
+  expect(authClient.mails).toHaveLength(2)
+})
+
 test('ログアウトすると、ログインの画面になり、もう一度ログインすると今日の記録の画面に移る', async () => {
   const authClient = createMemoryAuthClient()
   await authClient.signUp('alice@example.com', PASSWORD)
+  authClient.verify('alice@example.com')
+  await authClient.signIn('alice@example.com', PASSWORD)
   open('#/account')
   render(<App today={TODAY} authClient={authClient} />)
 
@@ -116,17 +207,18 @@ test.each([
   expect(await authClient.getSession()).toBeNull()
 })
 
-test('すでに登録されているメールアドレスで登録しようとすると、日本語のエラーを出す', async () => {
+test('すでに登録されているメールアドレスで登録しようとしても、登録できたときと同じ表示にする', async () => {
   const authClient = createMemoryAuthClient()
   await authClient.signUp('alice@example.com', PASSWORD)
-  await authClient.signOut()
   open('#/signup')
   render(<App today={TODAY} authClient={authClient} />)
 
   await signUp('alice@example.com', 'another-password')
-  expect(await screen.findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.alreadyRegistered)
+  expect(await screen.findByRole('status')).toHaveTextContent('確認のメールを送りました。メールのリンクを開いてください')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   expect(window.location.hash).toBe('#/signup')
   expect(await authClient.getSession()).toBeNull()
+  expect(authClient.mails[1]).toEqual({ to: 'alice@example.com', kind: 'alreadyRegistered' })
 })
 
 test.each([
@@ -135,7 +227,7 @@ test.each([
 ])('ログインで%sときは、日本語のエラーを出し、ログインしない', async (_, email, password) => {
   const authClient = createMemoryAuthClient()
   await authClient.signUp('alice@example.com', PASSWORD)
-  await authClient.signOut()
+  authClient.verify('alice@example.com')
   open('#/login')
   render(<App today={TODAY} authClient={authClient} />)
 
@@ -150,7 +242,7 @@ test.each([
 test('試す回数の上限を超えたときは、日本語のエラーを出す', async () => {
   const authClient = createMemoryAuthClient()
   await authClient.signUp('alice@example.com', PASSWORD)
-  await authClient.signOut()
+  authClient.verify('alice@example.com')
   open('#/login')
   render(<App today={TODAY} authClient={authClient} />)
 
@@ -163,6 +255,8 @@ test('試す回数の上限を超えたときは、日本語のエラーを出�
 test('ログアウトに失敗したときは、エラーを出し、ログイン中のまま', async () => {
   const authClient = createMemoryAuthClient()
   await authClient.signUp('alice@example.com', PASSWORD)
+  authClient.verify('alice@example.com')
+  await authClient.signIn('alice@example.com', PASSWORD)
   open('#/account')
   render(<App today={TODAY} authClient={authClient} />)
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createApiAuthClient } from './apiAuthClient'
-import { AUTH_MESSAGES, AuthError } from './authClient'
+import { AUTH_MESSAGES, AuthError, EmailNotVerifiedError } from './authClient'
 
 type Sent = { url: string; init: RequestInit }
 
@@ -25,10 +25,10 @@ const USER = { id: 'u1', email: 'alice@example.com', name: '', emailVerified: fa
 
 describe('ログインの API を呼ぶ窓口', () => {
   it('会員登録は POST /api/auth/sign-up/email に JSON で送り、前後の空白を除いたメールアドレスと空の名前を送る', async () => {
-    const { fetch, sent } = fakeFetch(() => json(200, { token: 't', user: USER }))
+    const { fetch, sent } = fakeFetch(() => json(200, { token: null, user: USER }))
     const client = createApiAuthClient({ fetch })
 
-    expect(await client.signUp(' alice@example.com ', 'password-123')).toEqual({ email: 'alice@example.com' })
+    await expect(client.signUp(' alice@example.com ', 'password-123')).resolves.toBeUndefined()
     expect(sent).toHaveLength(1)
     expect(sent[0].url).toBe('/api/auth/sign-up/email')
     expect(sent[0].init.method).toBe('POST')
@@ -50,6 +50,26 @@ describe('ログインの API を呼ぶ窓口', () => {
     ])
   })
 
+  it('確認のメールの送り直しは POST /api/auth/send-verification-email に、前後の空白を除いたメールアドレスを送る', async () => {
+    const { fetch, sent } = fakeFetch(() => json(200, { status: true }))
+
+    await expect(createApiAuthClient({ fetch }).sendVerificationEmail(' alice@example.com ')).resolves.toBeUndefined()
+    expect(sent[0].url).toBe('/api/auth/send-verification-email')
+    expect(sent[0].init.method).toBe('POST')
+    expect(JSON.parse(sent[0].init.body as string)).toEqual({ email: 'alice@example.com' })
+  })
+
+  it('メールアドレスの確認が済んでいないときのログインは、EmailNotVerifiedError にする', async () => {
+    const { fetch } = fakeFetch(() => json(403, { code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' }))
+    const error = await createApiAuthClient({ fetch })
+      .signIn('alice@example.com', 'password-123')
+      .catch((thrown: unknown) => thrown)
+
+    expect(error).toBeInstanceOf(EmailNotVerifiedError)
+    expect(error).toBeInstanceOf(AuthError)
+    expect((error as Error).message).toBe('メールアドレスの確認が済んでいません')
+  })
+
   it('ログイン中の会員は GET /api/auth/get-session で読み、ログインしていなければ null', async () => {
     const signedIn = fakeFetch(() => json(200, { session: {}, user: USER }))
     expect(await createApiAuthClient({ fetch: signedIn.fetch }).getSession()).toEqual({ email: 'alice@example.com' })
@@ -62,12 +82,17 @@ describe('ログインの API を呼ぶ窓口', () => {
 
   it.each([
     [401, { code: 'INVALID_EMAIL_OR_PASSWORD', message: 'Invalid email or password' }, AUTH_MESSAGES.wrongCredentials],
-    [422, { code: 'USER_ALREADY_EXISTS_USE_ANOTHER_EMAIL', message: 'User already exists.' }, AUTH_MESSAGES.alreadyRegistered],
     [400, { code: 'PASSWORD_TOO_SHORT', message: 'Password too short' }, AUTH_MESSAGES.passwordTooShort],
     [400, { code: 'INVALID_EMAIL', message: 'Invalid email' }, AUTH_MESSAGES.invalidEmail],
     [400, { code: 'VALIDATION_ERROR', message: '[body.email] Invalid email address' }, AUTH_MESSAGES.invalidEmail],
     [429, { code: 'TOO_MANY_REQUESTS', message: AUTH_MESSAGES.tooManyRequests }, AUTH_MESSAGES.tooManyRequests],
     [429, { message: 'Too many requests. Please try again later.' }, AUTH_MESSAGES.tooManyRequests],
+    [429, { code: 'TOO_MANY_MAIL_REQUESTS', message: AUTH_MESSAGES.tooManyMails }, AUTH_MESSAGES.tooManyMails],
+    [
+      500,
+      { error: { type: 'MailConfigurationError', message: '環境変数 RESEND_API_KEY を設定してください' } },
+      '環境変数 RESEND_API_KEY を設定してください',
+    ],
     [403, { code: 'INVALID_ORIGIN', message: 'Invalid origin' }, AUTH_MESSAGES.forbidden],
     [
       500,

@@ -1,14 +1,26 @@
-import { AUTH_MESSAGES, AuthError, MIN_PASSWORD_LENGTH, type AuthClient, type Member } from './authClient'
+import { AUTH_MESSAGES, AuthError, EmailNotVerifiedError, MIN_PASSWORD_LENGTH, type AuthClient, type Member } from './authClient'
+
+/** メモリーの窓口が「送った」メール（宛先と種類） */
+export type MemoryMail = {
+  to: string
+  kind: 'verification' | 'alreadyRegistered'
+}
 
 /**
  * メモリーの中だけで動くログインの窓口（画面のテスト用。アプリでは使わない）。
- * サーバーと同じく、メールアドレスは小文字にそろえ、パスワードは8文字以上にし、登録したらログインした状態にする
+ * サーバーと同じく、メールアドレスは小文字にそろえ、パスワードは8文字以上にする。
+ * 登録しても、メールアドレスを確認する（verify）までログインできない
  */
 export function createMemoryAuthClient(): AuthClient & {
   /** 次の呼び出しを、このエラーで失敗させる（回数の上限や通信の失敗の表示を確かめる） */
   failNext(error: Error): void
+  /** メールアドレスを確認済みにする（確認のメールのリンクを開いたときの代わり） */
+  verify(email: string): void
+  /** 「送った」メール */
+  mails: MemoryMail[]
 } {
-  const passwords = new Map<string, string>()
+  const members = new Map<string, { password: string; verified: boolean }>()
+  const mails: MemoryMail[] = []
   let current: Member | null = null
   let nextError: Error | null = null
 
@@ -19,8 +31,15 @@ export function createMemoryAuthClient(): AuthClient & {
   }
 
   return {
+    mails,
+
     failNext(error) {
       nextError = error
+    },
+
+    verify(email) {
+      const member = members.get(email.trim().toLowerCase())
+      if (member) member.verified = true
     },
 
     async getSession() {
@@ -32,16 +51,20 @@ export function createMemoryAuthClient(): AuthClient & {
       takeError()
       const normalized = email.trim().toLowerCase()
       if (password.length < MIN_PASSWORD_LENGTH) throw new AuthError(AUTH_MESSAGES.passwordTooShort)
-      if (passwords.has(normalized)) throw new AuthError(AUTH_MESSAGES.alreadyRegistered)
-      passwords.set(normalized, password)
-      current = { email: normalized }
-      return current
+      if (members.has(normalized)) {
+        mails.push({ to: normalized, kind: 'alreadyRegistered' })
+        return
+      }
+      members.set(normalized, { password, verified: false })
+      mails.push({ to: normalized, kind: 'verification' })
     },
 
     async signIn(email, password) {
       takeError()
       const normalized = email.trim().toLowerCase()
-      if (passwords.get(normalized) !== password) throw new AuthError(AUTH_MESSAGES.wrongCredentials)
+      const member = members.get(normalized)
+      if (member?.password !== password) throw new AuthError(AUTH_MESSAGES.wrongCredentials)
+      if (!member.verified) throw new EmailNotVerifiedError()
       current = { email: normalized }
       return current
     },
@@ -49,6 +72,12 @@ export function createMemoryAuthClient(): AuthClient & {
     async signOut() {
       takeError()
       current = null
+    },
+
+    async sendVerificationEmail(email) {
+      takeError()
+      const normalized = email.trim().toLowerCase()
+      if (members.get(normalized)?.verified === false) mails.push({ to: normalized, kind: 'verification' })
     },
   }
 }

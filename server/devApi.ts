@@ -1,6 +1,7 @@
 // 手元の開発（npm run dev）と e2e 専用。Vite の開発サーバーで /api/ 以下を API（server/api.ts）で処理する。
 // 保存先は手元の D1（wrangler の Miniflare。npm run db:migrate:local と同じ .wrangler/ の下）。
 // 認証は省く（DEV_USER_EMAIL）。会員のログイン（/api/auth/）の秘密の値は、開発専用の値を渡す（DEV_BETTER_AUTH_SECRET）。
+// メールは実際には送らず、開発サーバーの中にためる（DEV_MAILS_PATH で読む）。
 // 開発サーバーだけに入れる（apply: 'serve'）ので、ビルドした本番のアプリには入らない
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -8,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import type { Plugin, ViteDevServer } from 'vite'
 import type { ApiEnv, ApiErrorBody } from './api.ts'
 import type { D1Database } from './d1.ts'
+import type { MailMessage, MailTransport } from './mail/mailer.ts'
 
 const CONFIG_PATH = fileURLToPath(new URL('../wrangler.dev.jsonc', import.meta.url))
 
@@ -29,15 +31,33 @@ export const DEV_BETTER_AUTH_SECRET = 'meal-log-local-development-only-secret-do
 /** 利用者の IP アドレスのヘッダー（本番では Cloudflare が付ける。試す回数の上限を数えるのに使う） */
 const CLIENT_IP_HEADER = 'cf-connecting-ip'
 
+/**
+ * 手元の開発サーバーでは、メールを実際には送らず、開発サーバーの中にためる。ためたメールは、この受け口で読む
+ * （GET /__dev/mails?to=<宛先>。e2e が、確認のメールのリンクを開くのに使う。開発サーバーだけにあり、本番にはない）
+ */
+export const DEV_MAILS_PATH = '/__dev/mails'
+
+/** 手元の開発サーバーの送信元（Resend の試験用の送信元と同じ。実際には送らない） */
+export const DEV_MAIL_FROM = 'onboarding@resend.dev'
+
+/** ためておくメールの数の上限（古いものから捨てる） */
+const MAX_DEV_MAILS = 500
+
 export function devApiPlugin(): Plugin {
   return {
     name: 'meal-log-dev-api',
     apply: 'serve',
     configureServer(server) {
+      const mails: MailMessage[] = []
+      const mailTransport: MailTransport = async (message) => {
+        mails.push(message)
+        if (mails.length > MAX_DEV_MAILS) mails.splice(0, mails.length - MAX_DEV_MAILS)
+      }
+
       // API と手元の D1 は、最初に API が呼ばれたときに読み込んで起動する（ビルドやテストでは読み込まない）
       let started: Promise<DevApi> | null = null
       function start() {
-        started ??= startDevApi(server)
+        started ??= startDevApi(server, mailTransport)
         return started
       }
       server.httpServer?.once('close', () => {
@@ -46,12 +66,25 @@ export function devApiPlugin(): Plugin {
 
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split('?')[0] ?? ''
+        if (path === DEV_MAILS_PATH) {
+          handleMails(req, res)
+          return
+        }
         if (path !== '/api' && !path.startsWith('/api/')) {
           next()
           return
         }
         handleRequest(req, res).catch((error: unknown) => handleError(req, res, error))
       })
+
+      /** ためたメールのうち、宛先が to のものを、古い順に返す */
+      function handleMails(req: IncomingMessage, res: ServerResponse) {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const to = (url.searchParams.get('to') ?? '').trim().toLowerCase()
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'no-store')
+        res.end(JSON.stringify({ mails: mails.filter((mail) => mail.to.toLowerCase() === to) }))
+      }
 
       // エラーは Vite に渡さない（next(error) にしない）。Vite は、開いている画面にエラーの覆いを出し、
       // 画面が1つも開いていないときは次に開いた画面に出すので、関係のない画面の操作をふさいでしまう
@@ -88,6 +121,7 @@ export function devApiPlugin(): Plugin {
           DB: api.db,
           DEV_USER_EMAIL: email,
           BETTER_AUTH_SECRET: DEV_BETTER_AUTH_SECRET,
+          MAIL_FROM: DEV_MAIL_FROM,
         })
         res.statusCode = response.status
         response.headers.forEach((value, key) => {
@@ -108,12 +142,12 @@ type DevApi = {
   dispose: () => Promise<void>
 }
 
-async function startDevApi(server: ViteDevServer): Promise<DevApi> {
+async function startDevApi(server: ViteDevServer, mailTransport: MailTransport): Promise<DevApi> {
   // API のコードは、Vite に読み込ませる（設定ファイルと一緒にまとめない）
   const { createApiHandler } = (await server.ssrLoadModule('/server/api.ts')) as typeof import('./api.ts')
   const { getPlatformProxy } = await import('wrangler')
   const proxy = await getPlatformProxy<{ DB: D1Database }>({ configPath: CONFIG_PATH })
-  return { handle: createApiHandler(), db: proxy.env.DB, dispose: () => proxy.dispose() }
+  return { handle: createApiHandler({ mailTransport }), db: proxy.env.DB, dispose: () => proxy.dispose() }
 }
 
 /** Node の受け取ったリクエストを、API が受け取る Request にする */
