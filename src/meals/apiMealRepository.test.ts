@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CONNECTION_FAILED_MESSAGE, createApiMealRepository, LOGIN_EXPIRED_MESSAGE } from './apiMealRepository'
 import { MealValidationError, type MealRecord } from './mealRecord'
-import { MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
+import { LoginExpiredError, MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
 
 // サーバーの API の呼び方と、応答の扱いを、fetch を差し替えて確かめる。
 // 実際の API（server/api.ts）とつないだ確認は server/apiMealRepository.test.ts にある
@@ -206,12 +206,14 @@ describe('エラー', () => {
     ['ログイン画面への転送（302）', () => new Response(null, { status: 302, headers: { Location: 'https://team.cloudflareaccess.com/' } })],
     // ブラウザで redirect: 'manual' にしたときの応答（Response を作るだけでは、この type にできない）
     ['ログイン画面への転送（opaqueredirect）', () => ({ type: 'opaqueredirect', status: 0, ok: false }) as Response],
-  ])('ログインの期限が切れたとき（%s）は、MealStorageError で読み込み直しを促す', async (_name, response) => {
+  ])('ログインの期限が切れたとき（%s）は、LoginExpiredError（MealStorageError の一種）でログインし直しを促す', async (_name, response) => {
     const { repository } = repositoryWith(response)
     for (const run of [() => repository.listByDate('2026-11-06'), () => repository.update('a', { name: 'そば' })]) {
       const error = await run().catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(LoginExpiredError)
       expect(error).toBeInstanceOf(MealStorageError)
       expect((error as Error).message).toBe(LOGIN_EXPIRED_MESSAGE)
+      expect(LOGIN_EXPIRED_MESSAGE).toBe('ログインの期限が切れました。ログインし直してください')
     }
   })
 

@@ -1,8 +1,8 @@
 import { MealValidationError, type MealRecord } from './mealRecord'
-import { MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
+import { LoginExpiredError, MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
 
 /** ログインの期限が切れたとき（API が 401 を返した、ログイン画面へ転送された）のエラーのメッセージ */
-export const LOGIN_EXPIRED_MESSAGE = 'ログインの期限が切れました。ページを読み込み直してください'
+export const LOGIN_EXPIRED_MESSAGE = 'ログインの期限が切れました。ログインし直してください'
 
 /** 通信に失敗したとき（サーバーに届かない）のエラーのメッセージ */
 export const CONNECTION_FAILED_MESSAGE = 'サーバーに接続できませんでした。通信の状態を確かめてください'
@@ -35,14 +35,16 @@ export function createApiMealRepository(options: ApiMealRepositoryOptions = {}):
         method,
         headers,
         body: callOptions.body === undefined ? undefined : JSON.stringify(callOptions.body),
-        // ログインの期限が切れると、Access はログイン画面（別のオリジン）へ転送する。
-        // 転送をたどると通信の失敗と見分けられないので、たどらずに受け取る
+        // ログインの cookie を送る
+        credentials: 'same-origin',
+        // 公開の前は、サイト全体を Access が守っている。Access のログインの期限が切れると、
+        // ログイン画面（別のオリジン）へ転送する。転送をたどると通信の失敗と見分けられないので、たどらずに受け取る
         redirect: 'manual',
       })
     } catch (error) {
       throw new MealStorageError(CONNECTION_FAILED_MESSAGE, { cause: error })
     }
-    if (isLoginExpired(response)) throw new MealStorageError(LOGIN_EXPIRED_MESSAGE)
+    if (isLoginExpired(response)) throw new LoginExpiredError(LOGIN_EXPIRED_MESSAGE)
     if (!response.ok) throw await errorOf(response, callOptions.id)
     if (response.status === 204) return null
     return readJson(response)

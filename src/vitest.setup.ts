@@ -9,10 +9,11 @@ vi.mock('./meals/defaultMealRepository', async () => {
   return { createDefaultMealRepository: () => createLocalStorageMealRepository() }
 })
 
-// ログインの窓口も、サーバーのログインの API ではなく、メモリーの中だけで動く窓口に差し替える
+// ログインの窓口も、サーバーのログインの API ではなく、メモリーの中だけで動く窓口に差し替える。
+// 記録の画面は、ログインしていないと開けないので、ログインした会員（member@example.com）の状態から始める
 vi.mock('./auth/defaultAuthClient', async () => {
   const { createMemoryAuthClient } = await import('./auth/memoryAuthClient')
-  return { createDefaultAuthClient: () => createMemoryAuthClient() }
+  return { createDefaultAuthClient: () => createMemoryAuthClient({ signedInAs: 'member@example.com' }) }
 })
 
 afterEach(() => {

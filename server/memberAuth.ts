@@ -1,5 +1,5 @@
-// 会員の登録とログイン（Better Auth）。/api/auth/ 以下のリクエストを処理する（server/api.ts から呼ぶ）。
-// Access の確かめより前に動く。記録の読み書き（/api/meals など）は、まだ Access のログインで動く。
+// 会員の登録とログイン（Better Auth）。/api/auth/ 以下のリクエストを処理し、記録の API のために、
+// cookie のセッションからログイン中の会員を取り出す（どちらも server/api.ts から呼ぶ）。
 // 会員登録したら、メールアドレスを確認するまでログインできない（確認のメールは server/mail/ の部品で送る）
 
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
@@ -7,7 +7,6 @@ import { APIError } from 'better-auth/api'
 import { AUTH_MESSAGES, MIN_PASSWORD_LENGTH, type EmailVerificationResult } from '../src/auth/authClient'
 import { loginHash, resetHash } from '../src/route'
 import type { ApiErrorBody } from './api'
-import { AuthConfigurationError } from './auth'
 import type { D1Database } from './d1'
 import { consumeMailRateLimit } from './mail/mailRateLimit'
 import {
@@ -29,6 +28,22 @@ export const AUTH_BASE_PATH = '/api/auth'
 export type MemberAuthEnv = MailEnv & {
   /** セッションなどの署名に使う秘密の値。リポジトリには書かない（本番とプレビューは Cloudflare 側で、手元は起動するときだけ設定する） */
   BETTER_AUTH_SECRET?: string
+}
+
+/** 認証の設定（環境変数）が足りないときのエラー */
+export class AuthConfigurationError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AuthConfigurationError'
+  }
+}
+
+/** ログイン中の会員（記録の API が、記録を絞るのに使う） */
+export type AuthenticatedMember = {
+  /** 会員の ID（表 "user" の id） */
+  id: string
+  /** メールアドレス（小文字にそろえたもの） */
+  email: string
 }
 
 /** 確認のメールのリンクの有効期限（秒） */
@@ -194,10 +209,22 @@ export type MemberAuthHandlerOptions = {
   mailTransport?: MailTransport
 }
 
-type MemberAuth = { handler: (request: Request) => Promise<Response> }
+type MemberAuth = {
+  handler: (request: Request) => Promise<Response>
+  api: {
+    getSession: (context: { headers: Headers }) => Promise<{
+      user: { id: string; email: string; emailVerified: boolean | number | null }
+    } | null>
+  }
+}
 
-/** /api/auth/ 以下のリクエストを処理する関数を作る */
-export function createMemberAuthHandler(options: MemberAuthHandlerOptions = {}) {
+/**
+ * 会員の登録とログインの処理を作る。
+ *   handleAuthRequest  /api/auth/ 以下のリクエストを処理する
+ *   getMember          リクエストの cookie のセッションから、ログイン中の会員を取り出す
+ * どちらも、BETTER_AUTH_SECRET がなければ AuthConfigurationError
+ */
+export function createMemberAuth(options: MemberAuthHandlerOptions = {}) {
   // 同じオリジンと設定なら、作った Better Auth を使い回す（最後の1つだけ覚える）
   let cached: { key: string; db: D1Database; auth: MemberAuth } | null = null
   // 処理中のリクエストの ID ごとの、メールを送れなかったエラー
@@ -208,25 +235,44 @@ export function createMemberAuthHandler(options: MemberAuthHandlerOptions = {}) 
     if (id) mailErrors.set(id, error)
   }
 
-  return async function handleAuthRequest(request: Request, env: MemberAuthEnv, db: D1Database): Promise<Response> {
+  function authFor(request: Request, env: MemberAuthEnv, db: D1Database): MemberAuth {
     const secret = env.BETTER_AUTH_SECRET?.trim()
     if (!secret) throw new AuthConfigurationError('環境変数 BETTER_AUTH_SECRET を設定してください')
 
-    const url = new URL(request.url)
-    const origin = url.origin
+    const origin = new URL(request.url).origin
     const key = JSON.stringify([origin, secret, env.RESEND_API_KEY ?? '', env.MAIL_FROM ?? '', env.MAIL_ALLOWED_TO ?? ''])
     if (cached === null || cached.key !== key || cached.db !== db) {
       const mailer = createMailer(env, { transport: options.mailTransport })
-      cached = { key, db, auth: betterAuth(memberAuthOptions(origin, secret, db, mailer, reportMailError)) }
+      const auth = betterAuth(memberAuthOptions(origin, secret, db, mailer, reportMailError))
+      cached = { key, db, auth: auth as unknown as MemberAuth }
     }
-    const auth = cached.auth
+    return cached.auth
+  }
 
+  /**
+   * ログイン中の会員。ログインしていない、セッションが無効か期限切れ、メールアドレスの確認が済んでいないときは null。
+   * セッションは毎回 D1 で確かめる（ログアウトした後の cookie は使えない）
+   */
+  async function getMember(request: Request, env: MemberAuthEnv, db: D1Database): Promise<AuthenticatedMember | null> {
+    const auth = authFor(request, env, db)
+    // cookie がなければ、D1 を見るまでもなくログインしていない
+    if (!request.headers.has('Cookie')) return null
+    const session = await auth.api.getSession({ headers: request.headers })
+    if (session === null) return null
+    const { user } = session
+    if (!(user.emailVerified === true || Number(user.emailVerified) === 1)) return null
+    return { id: user.id, email: user.email.toLowerCase() }
+  }
+
+  async function handleAuthRequest(request: Request, env: MemberAuthEnv, db: D1Database): Promise<Response> {
+    const auth = authFor(request, env, db)
+    const url = new URL(request.url)
     const path = url.pathname.slice(AUTH_BASE_PATH.length)
     if (path === '/verify-email' && request.method === 'GET') return handleVerifyEmail(url, request, auth, db)
     // Better Auth のオリジンの確認は、cookie のないリクエストには効かないので、再設定の入口は自分で確かめる
     if (RESET_PATHS.includes(path) && request.method === 'POST') {
       const requestOrigin = request.headers.get('Origin')
-      if (requestOrigin !== null && requestOrigin !== origin) {
+      if (requestOrigin !== null && requestOrigin !== url.origin) {
         return new Response(JSON.stringify({ code: 'INVALID_ORIGIN', message: 'Invalid origin' }), {
           status: 403,
           headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
@@ -251,6 +297,8 @@ export function createMemberAuthHandler(options: MemberAuthHandlerOptions = {}) 
       mailErrors.delete(id)
     }
   }
+
+  return { handleAuthRequest, getMember }
 }
 
 /**

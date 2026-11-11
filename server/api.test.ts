@@ -1,13 +1,22 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MealRecord } from '../src/meals/mealRecord'
-import { createApiHandler, type ApiEnv } from './api'
+import { createApiHandler } from './api'
 import type { D1Database, D1PreparedStatement } from './d1'
-import { startTestDatabase, type TestDatabase } from './testDatabase'
+import { createMemoryTransport } from './mail/mailer'
+import { overrideDatabase, startTestDatabase, type TestDatabase } from './testDatabase'
+import { createTestMember, signInTestMember, TEST_ORIGIN, testEnv, type TestMember } from './testMember'
 
 let database: TestDatabase
+/** ログインした会員（テストの間で使い回す。記録だけをテストごとに消す） */
+let alice: TestMember
+let bob: TestMember
+
+const authHandle = createApiHandler({ mailTransport: createMemoryTransport() })
 
 beforeAll(async () => {
   database = await startTestDatabase()
+  alice = await createTestMember(authHandle, database.db, 'alice@example.com')
+  bob = await createTestMember(authHandle, database.db, 'bob@example.com')
 })
 
 afterAll(async () => {
@@ -15,7 +24,7 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  await database.reset()
+  await database.db.prepare('DELETE FROM member_meals').run()
   vi.restoreAllMocks()
 })
 
@@ -29,13 +38,10 @@ function createClock(start = '2026-11-06T00:00:00.000Z') {
   }
 }
 
-const ALICE = 'alice@example.com'
-const BOB = 'bob@example.com'
-
 type CallOptions = {
   body?: unknown
-  /** 認証を省いて、この人として扱う（DEV_USER_EMAIL） */
-  as?: string
+  /** この会員のログインの cookie を送る（既定は alice） */
+  as?: TestMember
   headers?: Record<string, string>
   db?: D1Database
 }
@@ -43,20 +49,19 @@ type CallOptions = {
 function createClient(handlerOptions: Parameters<typeof createApiHandler>[0] = { now: createClock() }) {
   const handle = createApiHandler(handlerOptions)
   return async function call(method: string, path: string, options: CallOptions = {}) {
-    const headers: Record<string, string> = { ...options.headers }
+    const headers: Record<string, string> = { Cookie: (options.as ?? alice).cookie, ...options.headers }
     if (options.body !== undefined && headers['Content-Type'] === undefined) {
       headers['Content-Type'] = 'application/json'
     }
     if (['POST', 'PATCH', 'DELETE'].includes(method) && headers['Content-Type'] === undefined) {
       headers['Content-Type'] = 'application/json'
     }
-    const request = new Request(`https://meal-log.example${path}`, {
+    const request = new Request(`${TEST_ORIGIN}${path}`, {
       method,
       headers,
       body: options.body === undefined ? undefined : typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
     })
-    const env: ApiEnv = { DB: options.db ?? database.db, DEV_USER_EMAIL: options.as ?? ALICE }
-    const response = await handle(request, env)
+    const response = await handle(request, testEnv(options.db ?? database.db))
     const text = await response.text()
     return { status: response.status, headers: response.headers, body: text === '' ? null : JSON.parse(text) }
   }
@@ -93,14 +98,13 @@ function interruptedDb(prefix: string, interrupt: () => Promise<unknown>, times 
       },
     }
   }
-  return {
+  return overrideDatabase(database.db, {
     // prefix で始まらない文は包まない（batch には D1 の文のまま渡す必要があるため）
     prepare: (query) => {
       const statement = database.db.prepare(query)
       return query.trimStart().startsWith(prefix) ? wrap(statement) : statement
     },
-    batch: (statements) => database.db.batch(statements),
-  }
+  })
 }
 
 /** 1件の記録のアドレス */
@@ -410,7 +414,7 @@ describe('並び順', () => {
       body: { records: [imported({ id: 'future', createdAt: '2026-11-06T05:00:00.000Z' })] },
     })
     await call('POST', '/api/import', {
-      as: BOB,
+      as: bob,
       body: { records: [imported({ id: 'bob-future', createdAt: '2026-11-06T09:00:00.000Z' })] },
     })
     const created = (await call('POST', '/api/meals', { body: base })).body.meal
@@ -699,11 +703,10 @@ describe('全件の取得と一括取り込み', () => {
     const call = createClient()
     const kept = (await call('POST', '/api/meals', { body: base })).body.meal
     // 最後の文だけを失敗させる（それより前の文の書き込みも取り消されることを確かめる）
-    const failingDb: D1Database = {
-      prepare: (query) => database.db.prepare(query),
+    const failingDb = overrideDatabase(database.db, {
       batch: (statements: D1PreparedStatement[]) =>
         database.db.batch([...statements.slice(0, -1), database.db.prepare('INSERT INTO no_such_table VALUES (1)')]),
-    }
+    })
     vi.spyOn(console, 'error').mockImplementation(() => {})
     const records = Array.from({ length: 250 }, (_, index) => imported({ id: `r${index}` }))
 
@@ -714,48 +717,83 @@ describe('全件の取得と一括取り込み', () => {
   })
 })
 
-describe('他の人の記録', () => {
+describe('他の会員の記録', () => {
   async function setUp() {
     const call = createClient()
-    const bobMeal = (await call('POST', '/api/meals', { as: BOB, body: { ...base, name: 'ボブの品', status: 'planned' } }))
+    const bobMeal = (await call('POST', '/api/meals', { as: bob, body: { ...base, name: 'ボブの品', status: 'planned' } }))
       .body.meal as MealRecord
     return { call, bobMeal }
   }
 
-  it('取得（日付、期間、1件、全件）で見えない', async () => {
+  it('取得（日付、期間、1件、全件）で見えない。ID を指定しても 404', async () => {
     const { call, bobMeal } = await setUp()
 
     expect((await call('GET', `/api/meals?date=${base.date}`)).body.meals).toEqual([])
     expect((await call('GET', `/api/meals?from=${base.date}&to=${base.date}`)).body.meals).toEqual([])
-    expect((await call('GET', mealPath(bobMeal.id))).status).toBe(404)
+    const got = await call('GET', mealPath(bobMeal.id))
+    expect(got.status).toBe(404)
+    expect(got.body.error.type).toBe('MealNotFoundError')
     expect((await call('GET', '/api/meals')).body.meals).toEqual([])
-    expect((await call('GET', '/api/meals', { as: BOB })).body.meals).toEqual([bobMeal])
+    expect((await call('GET', '/api/meals', { as: bob })).body.meals).toEqual([bobMeal])
   })
 
-  it('更新・削除・日が過ぎた予定の更新で変えられない', async () => {
+  it('更新・削除は 404 で、日が過ぎた予定の更新でも変えられない', async () => {
     const { call, bobMeal } = await setUp()
 
-    expect((await call('PATCH', mealPath(bobMeal.id), { body: { name: '書き換え' } })).status).toBe(404)
-    expect((await call('DELETE', mealPath(bobMeal.id))).status).toBe(404)
+    const patched = await call('PATCH', mealPath(bobMeal.id), { body: { name: '書き換え' } })
+    expect(patched.status).toBe(404)
+    expect(patched.body.error.type).toBe('MealNotFoundError')
+    const deleted = await call('DELETE', mealPath(bobMeal.id))
+    expect(deleted.status).toBe(404)
+    expect(deleted.body.error.type).toBe('MealNotFoundError')
     expect((await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-12-01' } })).body.meals).toEqual(
       [],
     )
-    expect((await call('GET', mealPath(bobMeal.id), { as: BOB })).body.meal).toEqual(bobMeal)
+    expect((await call('GET', mealPath(bobMeal.id), { as: bob })).body.meal).toEqual(bobMeal)
   })
 
-  it('同じ ID の記録を取り込んでも、他の人の記録は変わらず、別の記録として保存される', async () => {
+  it('同じ ID の記録を取り込んでも、他の会員の記録は変わらず、別の記録として保存される', async () => {
     const { call, bobMeal } = await setUp()
 
     const mine = imported({ id: bobMeal.id, name: 'アリスの品' })
     expect((await call('POST', '/api/import', { body: { records: [mine] } })).status).toBe(204)
     expect((await call('GET', mealPath(bobMeal.id))).body.meal).toEqual(mine)
-    expect((await call('GET', mealPath(bobMeal.id), { as: BOB })).body.meal).toEqual(bobMeal)
+    expect((await call('GET', mealPath(bobMeal.id), { as: bob })).body.meal).toEqual(bobMeal)
+
+    // 取り込んだ記録を変えたり消したりしても、他の会員の同じ ID の記録は変わらない
+    expect((await call('PATCH', mealPath(bobMeal.id), { body: { name: 'アリスの品2' } })).status).toBe(200)
+    expect((await call('DELETE', mealPath(bobMeal.id))).status).toBe(204)
+    expect((await call('GET', mealPath(bobMeal.id), { as: bob })).body.meal).toEqual(bobMeal)
+    expect((await call('GET', '/api/meals', { as: bob })).body.meals).toEqual([bobMeal])
   })
 
-  it('メールアドレスの大文字と小文字は区別しない', async () => {
-    const { call, bobMeal } = await setUp()
+  it('2人が同じ ID の記録を取り込むと、それぞれ別の記録になる', async () => {
+    const call = createClient()
+    const shared = imported({ id: 'shared-id' })
 
-    expect((await call('GET', mealPath(bobMeal.id), { as: 'Bob@Example.COM' })).body.meal).toEqual(bobMeal)
+    await call('POST', '/api/import', { body: { records: [shared] } })
+    await call('POST', '/api/import', { as: bob, body: { records: [{ ...shared, name: 'ボブのカレー' }] } })
+    expect((await call('GET', mealPath('shared-id'))).body.meal).toEqual(shared)
+    expect((await call('GET', mealPath('shared-id'), { as: bob })).body.meal).toEqual({ ...shared, name: 'ボブのカレー' })
+  })
+
+  it('日が過ぎた予定の更新は、自分の予定だけを食べたにする', async () => {
+    const call = createClient()
+    const mine = (await call('POST', '/api/meals', { body: { ...base, status: 'planned' } })).body.meal as MealRecord
+    const bobs = (await call('POST', '/api/meals', { as: bob, body: { ...base, status: 'planned' } })).body.meal as MealRecord
+
+    const marked = await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-12-01' } })
+    expect(marked.body.meals.map((record: MealRecord) => record.id)).toEqual([mine.id])
+    expect((await call('GET', mealPath(bobs.id), { as: bob })).body.meal).toEqual(bobs)
+  })
+
+  it('同じ会員なら、別のセッション（別の端末のログイン）でも同じ記録が見える', async () => {
+    const { call, bobMeal } = await setUp()
+    const otherDevice = await signInTestMember(authHandle, database.db, 'Bob@Example.COM')
+
+    expect(otherDevice.id).toBe(bob.id)
+    expect(otherDevice.cookie).not.toBe(bob.cookie)
+    expect((await call('GET', mealPath(bobMeal.id), { as: otherDevice })).body.meal).toEqual(bobMeal)
   })
 })
 
@@ -777,6 +815,33 @@ describe('リクエストの形', () => {
       expect(response.body.error.type).toBe('UnsupportedMediaType')
     }
     expect((await call('GET', '/api/meals')).body.meals).toEqual(before)
+  })
+
+  it.each([
+    ['POST', '/api/meals', { body: base }],
+    ['PATCH', mealPath('a'), { body: { name: 'パン' } }],
+    ['DELETE', mealPath('a'), {}],
+    ['POST', '/api/import', { body: { records: [] } }],
+    ['POST', '/api/mark-planned-as-eaten', { body: { date: '2026-11-06' } }],
+  ])('書き込み（%s %s）は、Origin が他のオリジンなら 403（Forbidden）で、何も変えない', async (method, path, init) => {
+    const call = createClient()
+    await call('POST', '/api/import', { body: { records: [imported({ id: 'a', status: 'planned' })] } })
+    const before = (await call('GET', '/api/meals')).body.meals
+
+    for (const origin of ['https://evil.example', 'http://meal-log.example', 'null']) {
+      const response = await call(method, path, { ...init, headers: { Origin: origin } })
+      expect(response.status).toBe(403)
+      expect(response.body.error.type).toBe('Forbidden')
+    }
+    expect((await call('GET', '/api/meals')).body.meals).toEqual(before)
+  })
+
+  it('書き込みは、Origin が同じオリジンか、Origin がなければ受け付ける。読み出しは Origin を見ない', async () => {
+    const call = createClient()
+
+    expect((await call('POST', '/api/meals', { body: base, headers: { Origin: TEST_ORIGIN } })).status).toBe(201)
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(201)
+    expect((await call('GET', '/api/meals', { headers: { Origin: 'https://evil.example' } })).status).toBe(200)
   })
 
   it('Content-Type に charset が付いていても受け付ける', async () => {
@@ -815,10 +880,10 @@ describe('保存先の失敗', () => {
     const call = createClient()
     // マイグレーションの確かめは、最初のリクエストで済ませておく（失敗させたいのは記録の読み書き）
     expect((await call('GET', '/api/meals')).status).toBe(200)
-    const brokenDb: D1Database = {
-      prepare: () => database.db.prepare('SELECT * FROM no_such_table'),
-      batch: (statements) => database.db.batch(statements),
-    }
+    // 記録の表への文だけを失敗させる（ログインの確かめは通す）
+    const brokenDb = overrideDatabase(database.db, {
+      prepare: (query) => database.db.prepare(query.includes('member_meals') ? 'SELECT * FROM no_such_table' : query),
+    })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
     for (const [method, path, body] of [

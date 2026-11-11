@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, test } from 'vitest'
 import App from '../App'
+import { renderApp } from '../renderApp'
 import { AUTH_MESSAGES, AuthError } from './authClient'
 import { createMemoryAuthClient } from './memoryAuthClient'
 
@@ -40,9 +41,18 @@ async function expectTodayScreen() {
   expect(window.location.hash).toBe('#/')
 }
 
-test('記録の画面のヘッダーの「アカウント」で、アカウントの画面を開く。ログインしていなければ、ログインの画面を出す', async () => {
-  render(<App today={TODAY} />)
+test('記録の画面のヘッダーの「アカウント」で、アカウントの画面を開く', async () => {
+  await renderApp(<App today={TODAY} authClient={createMemoryAuthClient({ signedInAs: 'alice@example.com' })} />)
   fireEvent.click(screen.getByRole('button', { name: 'アカウント' }))
+
+  expect(window.location.hash).toBe('#/account')
+  expect(await screen.findByText('alice@example.com')).toBeInTheDocument()
+  expect(screen.getByRole('heading', { name: 'アカウント' })).toBeInTheDocument()
+})
+
+test('ログインしていなければ、アカウントの画面はログインの画面を出す', async () => {
+  open('#/account')
+  render(<App today={TODAY} authClient={createMemoryAuthClient()} />)
 
   expect(window.location.hash).toBe('#/account')
   expect(await screen.findByRole('heading', { name: 'ログイン' })).toBeInTheDocument()

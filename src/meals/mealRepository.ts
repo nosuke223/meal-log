@@ -48,3 +48,14 @@ export class MealStorageError extends Error {
     this.name = 'MealStorageError'
   }
 }
+
+/**
+ * ログインの期限が切れて（ログアウトした、ほかの端末でパスワードを変えたなども含む）、保存先を使えないときのエラー。
+ * 画面は、これを受け取ったら、ログインの画面に移る
+ */
+export class LoginExpiredError extends MealStorageError {
+  constructor(message: string) {
+    super(message)
+    this.name = 'LoginExpiredError'
+  }
+}

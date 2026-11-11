@@ -43,23 +43,22 @@ type MealRow = {
 const COLUMNS = 'id, date, meal_type, name, genre, dish_type, status, created_at, updated_at'
 
 /**
- * D1 に保存する窓口を作る。読み書きはすべて userEmail の人の記録だけに絞る
- * （userEmail は、認証で確かめたメールアドレス。小文字にそろえて使う）
+ * D1（表 member_meals）に保存する窓口を作る。読み書きはすべて userId の会員の記録だけに絞る
+ * （userId は、ログインのセッションで確かめた会員の ID）
  */
 export function createD1MealRepository(
   db: D1Database,
-  userEmail: string,
+  userId: string,
   options: D1MealRepositoryOptions = {},
 ): MealRepository {
-  const email = userEmail.trim().toLowerCase()
   const now = options.now ?? (() => new Date())
   const generateId = options.generateId ?? (() => crypto.randomUUID())
 
   async function selectRecords(where: string, ...values: unknown[]): Promise<MealRecord[]> {
     const result = await withStorage('読み込めません', () =>
       db
-        .prepare(`SELECT ${COLUMNS} FROM meals WHERE user_email = ? AND ${where}`)
-        .bind(email, ...values)
+        .prepare(`SELECT ${COLUMNS} FROM member_meals WHERE user_id = ? AND ${where}`)
+        .bind(userId, ...values)
         .all<MealRow>(),
     )
     return result.results.map(toRecord).sort(compareMealRecords)
@@ -67,7 +66,7 @@ export function createD1MealRepository(
 
   async function selectOne(id: string): Promise<MealRecord | null> {
     const row = await withStorage('読み込めません', () =>
-      db.prepare(`SELECT ${COLUMNS} FROM meals WHERE user_email = ? AND id = ?`).bind(email, id).first<MealRow>(),
+      db.prepare(`SELECT ${COLUMNS} FROM member_meals WHERE user_id = ? AND id = ?`).bind(userId, id).first<MealRow>(),
     )
     return row === null ? null : toRecord(row)
   }
@@ -101,8 +100,8 @@ export function createD1MealRepository(
         // 同じミリ秒に続けて作っても作った順に並ぶよう、その人の保存済みのどの記録の作成日時よりも後にする
         const latest = await withStorage('読み込めません', () =>
           db
-            .prepare('SELECT MAX(created_at) AS latest FROM meals WHERE user_email = ?')
-            .bind(email)
+            .prepare('SELECT MAX(created_at) AS latest FROM member_meals WHERE user_id = ?')
+            .bind(userId)
             .first<{ latest: string | null }>(),
         )
         const timestamp = createdAtFor(now(), latest?.latest ?? null)
@@ -113,11 +112,11 @@ export function createD1MealRepository(
         const result = await withStorage('書き込めません', () =>
           db
             .prepare(
-              `INSERT INTO meals (user_email, ${COLUMNS})
+              `INSERT INTO member_meals (user_id, ${COLUMNS})
                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
-               WHERE NOT EXISTS (SELECT 1 FROM meals WHERE user_email = ?1 AND created_at >= ?9)`,
+               WHERE NOT EXISTS (SELECT 1 FROM member_meals WHERE user_id = ?1 AND created_at >= ?9)`,
             )
-            .bind(email, ...toValues(record))
+            .bind(userId, ...toValues(record))
             .run(),
         )
         if (result.meta.changes > 0) return record
@@ -142,8 +141,8 @@ export function createD1MealRepository(
         const result = await withStorage('書き込めません', () =>
           db
             .prepare(
-              `UPDATE meals SET date = ?, meal_type = ?, name = ?, genre = ?, dish_type = ?, status = ?, updated_at = ?
-               WHERE user_email = ? AND id = ? AND date = ? AND meal_type = ? AND name = ? AND genre IS ?
+              `UPDATE member_meals SET date = ?, meal_type = ?, name = ?, genre = ?, dish_type = ?, status = ?, updated_at = ?
+               WHERE user_id = ? AND id = ? AND date = ? AND meal_type = ? AND name = ? AND genre IS ?
                  AND dish_type IS ? AND status = ? AND created_at = ? AND updated_at = ?`,
             )
             .bind(
@@ -154,7 +153,7 @@ export function createD1MealRepository(
               updated.dishType,
               updated.status,
               updated.updatedAt,
-              email,
+              userId,
               ...toValues(current),
             )
             .run(),
@@ -167,7 +166,7 @@ export function createD1MealRepository(
 
     async delete(id) {
       const result = await withStorage('書き込めません', () =>
-        db.prepare('DELETE FROM meals WHERE user_email = ? AND id = ?').bind(email, id).run(),
+        db.prepare('DELETE FROM member_meals WHERE user_id = ? AND id = ?').bind(userId, id).run(),
       )
       if (result.meta.changes === 0) throw new MealNotFoundError(id)
     },
@@ -191,18 +190,18 @@ export function createD1MealRepository(
         const statements = chunk(changes, RECORDS_PER_STATEMENT).map((part) =>
           db
             .prepare(
-              `UPDATE meals SET status = 'eaten', updated_at = u.new_updated_at
+              `UPDATE member_meals SET status = 'eaten', updated_at = u.new_updated_at
                FROM (
                  SELECT json_extract(value, '$.id') AS new_id,
                    json_extract(value, '$.updatedAt') AS old_updated_at,
                    json_extract(value, '$.newUpdatedAt') AS new_updated_at
                  FROM json_each(?2)
                ) AS u
-               WHERE meals.user_email = ?1 AND meals.id = u.new_id AND meals.status = 'planned' AND meals.date < ?3
-                 AND meals.updated_at = u.old_updated_at
+               WHERE member_meals.user_id = ?1 AND member_meals.id = u.new_id AND member_meals.status = 'planned'
+                 AND member_meals.date < ?3 AND member_meals.updated_at = u.old_updated_at
                RETURNING ${COLUMNS}`,
             )
-            .bind(email, JSON.stringify(part), date),
+            .bind(userId, JSON.stringify(part), date),
         )
         const results = await withStorage('書き込めません', () => db.batch<MealRow>(statements))
         const written = results.flatMap((result) => result.results.map(toRecord))
@@ -225,7 +224,7 @@ export function createD1MealRepository(
         db
           .prepare(
             // 「WHERE true」は、SQLite で INSERT ... SELECT と ON CONFLICT を一緒に書くときに必要
-            `INSERT INTO meals (user_email, ${COLUMNS})
+            `INSERT INTO member_meals (user_id, ${COLUMNS})
              SELECT ?1,
                json_extract(value, '$.id'),
                json_extract(value, '$.date'),
@@ -237,7 +236,7 @@ export function createD1MealRepository(
                json_extract(value, '$.createdAt'),
                json_extract(value, '$.updatedAt')
              FROM json_each(?2) WHERE true
-             ON CONFLICT (user_email, id) DO UPDATE SET
+             ON CONFLICT (user_id, id) DO UPDATE SET
                date = excluded.date,
                meal_type = excluded.meal_type,
                name = excluded.name,
@@ -247,7 +246,7 @@ export function createD1MealRepository(
                created_at = excluded.created_at,
                updated_at = excluded.updated_at`,
           )
-          .bind(email, JSON.stringify(part)),
+          .bind(userId, JSON.stringify(part)),
       )
       // batch は1つのトランザクションなので、どれかが失敗したら、保存データは元のまま
       await withStorage('書き込めません', () => db.batch(statements))

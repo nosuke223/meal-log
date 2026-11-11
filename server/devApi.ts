@@ -1,6 +1,7 @@
 // 手元の開発（npm run dev）と e2e 専用。Vite の開発サーバーで /api/ 以下を API（server/api.ts）で処理する。
 // 保存先は手元の D1（wrangler の Miniflare。npm run db:migrate:local と同じ .wrangler/ の下）。
-// 認証は省く（DEV_USER_EMAIL）。会員のログイン（/api/auth/）の秘密の値は、開発専用の値を渡す（DEV_BETTER_AUTH_SECRET）。
+// 認証は省かない（本番と同じく、会員登録してログインする）。会員のログイン（/api/auth/）の秘密の値は、
+// 開発専用の値を渡す（DEV_BETTER_AUTH_SECRET）。
 // メールは実際には送らず、開発サーバーの中にためる（DEV_MAILS_PATH で読む）。
 // 開発サーバーだけに入れる（apply: 'serve'）ので、ビルドした本番のアプリには入らない
 
@@ -13,18 +14,9 @@ import type { MailMessage, MailTransport } from './mail/mailer.ts'
 
 const CONFIG_PATH = fileURLToPath(new URL('../wrangler.dev.jsonc', import.meta.url))
 
-/** 認証を省いたときに扱う人 */
-export const DEV_USER_EMAIL = 'dev@example.com'
-
-/**
- * このヘッダーがあると、その値のメールアドレスの人として扱う（手元の開発サーバーだけ）。
- * e2e で、テストごとに別の人にして、記録が混ざらないようにするのに使う
- */
-export const DEV_USER_HEADER = 'x-dev-user-email'
-
 /**
  * 会員のログイン（Better Auth）の秘密の値。手元の開発とテスト専用（本番とプレビューには、別の値を Cloudflare 側で入れる）。
- * DEV_USER_EMAIL と同じく、起動するときだけ API に渡し、設定ファイルには書かない
+ * 起動するときだけ API に渡し、設定ファイルには書かない
  */
 export const DEV_BETTER_AUTH_SECRET = 'meal-log-local-development-only-secret-do-not-use-in-production'
 
@@ -109,8 +101,6 @@ export function devApiPlugin(): Plugin {
 
       async function handleRequest(req: IncomingMessage, res: ServerResponse) {
         const api = await start()
-        const header = req.headers[DEV_USER_HEADER]
-        const email = typeof header === 'string' && header.trim() !== '' ? header : DEV_USER_EMAIL
         const request = await toRequest(req)
         // 本番の Cloudflare と同じく、利用者の IP アドレスを付ける。e2e は、テストごとに別の値をヘッダーで送り、
         // 試す回数の上限がテストの間で混ざらないようにする（開発サーバーだけ）
@@ -119,7 +109,6 @@ export function devApiPlugin(): Plugin {
         }
         const response = await api.handle(request, {
           DB: api.db,
-          DEV_USER_EMAIL: email,
           BETTER_AUTH_SECRET: DEV_BETTER_AUTH_SECRET,
           MAIL_FROM: DEV_MAIL_FROM,
         })

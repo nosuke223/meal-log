@@ -1,4 +1,4 @@
-import { AUTH_MESSAGES, type AuthClient, type LoginNotice } from './authClient'
+import { AUTH_MESSAGES, type AuthClient, type LoginNotice, type Member } from './authClient'
 import { CredentialsForm } from './CredentialsForm'
 import { ResendVerificationForm } from './ResendVerification'
 
@@ -7,7 +7,7 @@ type Props = {
   /** 確認のメールのリンクを開いた結果か、パスワードを再設定した結果。なければ null */
   notice?: LoginNotice | null
   /** ログインできたとき */
-  onSignedIn: () => void
+  onSignedIn: (member: Member) => void
   onOpenSignup: () => void
   onOpenForgot: () => void
   onBack: () => void
@@ -21,6 +21,7 @@ const NOTICES: Record<LoginNotice, { message: string; failed: boolean; resend: b
   'link-expired': { message: AUTH_MESSAGES.linkExpired, failed: true, resend: true },
   'link-invalid': { message: AUTH_MESSAGES.linkInvalid, failed: true, resend: true },
   'link-error': { message: AUTH_MESSAGES.linkError, failed: true, resend: false },
+  'session-expired': { message: AUTH_MESSAGES.sessionExpired, failed: true, resend: false },
 }
 
 /** ログインの画面 */
@@ -49,8 +50,7 @@ export function LoginScreen({ authClient, notice: result = null, onSignedIn, onO
           submitLabel="ログイン"
           resendClient={authClient}
           onSubmit={async (email, password) => {
-            await authClient.signIn(email, password)
-            onSignedIn()
+            onSignedIn(await authClient.signIn(email, password))
           }}
         />
       </section>
