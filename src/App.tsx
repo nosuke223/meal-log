@@ -129,11 +129,13 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
   }
 
   // 上で今日の記録の画面や #/reset にしたときに、アドレスも置き換える（履歴は増やさない）
+  // 毎回の描画の後に確かめる（同じタブで別の再設定リンクを開くと、状態の hash が前回と同じ #/reset のままになり、
+  // hash を依存にすると実行されず、アドレスにトークンが残るため）
   useEffect(() => {
     if (hash !== window.location.hash) {
       window.history.replaceState(null, '', hash)
     }
-  }, [hash])
+  })
 
   if (route.screen === 'data') {
     return <DataScreen repository={mealRepository} today={today} onBack={() => navigate(todayHash())} />

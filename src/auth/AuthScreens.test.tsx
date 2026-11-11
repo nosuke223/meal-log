@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, test } from 'vitest'
 import App from '../App'
 import { AUTH_MESSAGES, AuthError } from './authClient'
@@ -337,6 +337,8 @@ test('使えないリンクを開いた後、同じタブで別の有効なリ�
 
   window.location.hash = `#/reset/${token}`
   expect(await screen.findByRole('form', { name: '新しいパスワード' })).toBeInTheDocument()
+  // 送信の前に、アドレスからトークンが消えている
+  await waitFor(() => expect(window.location.hash).toBe('#/reset'))
   setNewPassword(NEW_PASSWORD)
   expect(await screen.findByRole('status')).toHaveTextContent('パスワードを変更しました。ログインしてください')
 })
