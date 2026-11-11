@@ -2,7 +2,9 @@
 
 作った画面と API を Cloudflare Pages（画面と Pages Functions）と D1（データベース）に公開し、Cloudflare Access で所有者だけが開けるようにする手順です。上から順に行ってください。main にマージすると、Cloudflare が自動で本番にデプロイします（Cloudflare Pages を GitHub の `nosuke223/meal-log` につないであります）。表の変更（マイグレーション）は、アプリ（API）が、公開された後の最初のリクエストで、自分のつながっている D1 に当てます（手で当てる手順2は、緊急のときの予備です。「更新するとき」）。
 
-`<…>` の部分は、自分の値に置き換えます。値（ID、チーム名、AUD タグなど）はリポジトリに書かず、Cloudflare の画面と手元のメモにだけ残してください。
+記録の API は、会員のログイン（Better Auth のセッションの cookie）で本人を確かめ、会員ごとに記録を分けます（README の「認証」）。API は Access のログインの情報（JWT）を見ません。Access は、公開の準備（Access を外す Issue）までの間、ホスト全体を所有者だけが開けるように守るものとして残ります。
+
+`<…>` の部分は、自分の値に置き換えます。値（ID、秘密の値など）はリポジトリに書かず、Cloudflare の画面と手元のメモにだけ残してください。
 
 ## 全体像と、決めておく値
 
@@ -20,19 +22,18 @@
 | 名前 | 内容 | 設定する場所 |
 | --- | --- | --- |
 | `DB` | D1 のバインディング。本番とプレビューで別の D1 | 手順3（本番）、手順9-1（プレビュー） |
-| `ACCESS_TEAM_NAME` | Access のチーム名 | 手順5 |
-| `ACCESS_AUD` | Access のアプリケーションの AUD タグ | 手順5 |
-| `DEV_USER_EMAIL` | 手元の開発専用。**本番には設定しない** | 設定しない（手順6） |
-| `BETTER_AUTH_SECRET` | 会員のログイン（Better Auth）の秘密の値。本番とプレビューで別の値 | 手順9（本番は公開の直前でよい） |
-| `RESEND_API_KEY` | メールを送る Resend の API キー（秘密の値） | 手順10（プレビュー）。本番はドメインを取った後（公開の準備の Issue） |
-| `MAIL_FROM` | メールの送信元のアドレス | 手順10（プレビュー）。本番はドメインを取った後（公開の準備の Issue） |
-| `MAIL_ALLOWED_TO` | プレビュー専用。このアドレスにしかメールを送らない。**本番には設定しない** | 手順10（プレビューだけ） |
+| `BETTER_AUTH_SECRET` | 会員のログイン（Better Auth）の秘密の値。本番とプレビューで別の値。**本番で必須**（ないと記録の API も 500） | 手順5（本番）、手順9-2（プレビュー） |
+| `RESEND_API_KEY` | メールを送る Resend の API キー（秘密の値）。**本番で必須**（ないと会員登録できない） | 手順5（本番）、手順10（プレビュー） |
+| `MAIL_FROM` | メールの送信元のアドレス。**本番で必須** | 手順5（本番）、手順10（プレビュー） |
+| `MAIL_ALLOWED_TO` | プレビュー専用。このアドレスにしかメールを送らない。**本番には設定しない** | 手順10（プレビューだけ）。本番にないことを手順6で確かめる |
+
+開発用の値（名前が `DEV_` で始まるもの）は、手元の `npm run dev` と `npm run dev:api` が起動するときだけ使います。本番にもプレビューにも設定しません（手順6）。
 
 ## 事前の準備
 
 - Cloudflare のアカウントがある
 - Zero Trust（Access）が使える。初めて Zero Trust を開くと、アプリケーションの一覧ではなく「Finish your account setup」と出ます。次の順で進めます
-  1. チーム名を決める画面が出たら、チーム名を決める（後で `ACCESS_TEAM_NAME` の確認に使うので、場所は手順4で説明します）
+  1. チーム名を決める画面が出たら、チーム名を決める（Access のログイン画面のアドレス `<チーム名>.cloudflareaccess.com` に使われる）
   2. **Choose a plan** でプランを選ぶ（Free でよい）
 - このリポジトリを手元に clone し、`npm ci` で依存を入れてある
 - wrangler にログインしてある
@@ -59,7 +60,7 @@ npx wrangler d1 create meal-log
 
 > **ふだんは不要です。** アプリ（API）が、公開された後の最初のリクエストで、まだ当てていないマイグレーションを自分で当てます（README の「マイグレーションは、アプリが自分で当てる」）。空の D1 でも、最初のリクエストで表ができます。この手順は、アプリが当てられないときなど、緊急のときに手で当てるための予備です。ここで当てても、アプリの記録（表 `d1_migrations`）と食い違わず、アプリは適用済みのものを飛ばします。
 
-表のスキーマは `migrations/` の下のファイル（今は `0001_create_meals.sql`）で管理しています。本番の D1 に適用するための設定ファイルを、リポジトリのルートに `wrangler.migrate.jsonc` という名前で作ります（`.gitignore` に入れてあるので、コミットされません）。
+表のスキーマは `migrations/` の下のファイル（`0001_create_meals.sql` から番号の順）で管理しています。本番の D1 に適用するための設定ファイルを、リポジトリのルートに `wrangler.migrate.jsonc` という名前で作ります（`.gitignore` に入れてあるので、コミットされません）。
 
 ```jsonc
 {
@@ -82,7 +83,7 @@ npx wrangler d1 create meal-log
 npx wrangler d1 migrations apply DB --remote --config wrangler.migrate.jsonc
 ```
 
-適用してよいか聞かれたら「y」と答えます。成功すると、`meals` の表ができています。確かめるには:
+適用してよいか聞かれたら「y」と答えます。成功すると、記録の表 `member_meals` や会員の表 `user` などができています。確かめるには:
 
 ```sh
 npx wrangler d1 execute DB --remote --config wrangler.migrate.jsonc --command "SELECT name FROM sqlite_master WHERE type = 'table'"
@@ -118,13 +119,13 @@ API（Pages Functions）は、リポジトリ直下の `functions/`（`functions
 
 > **注意**: Root directory は空（リポジトリのルート）のままにしてください。`functions/` はルートから探されるので、別のディレクトリにすると API が入りません。
 
-> **注意**: 手元の `npm run dev` と `npm run dev:api` が使う `DEV_USER_EMAIL` は、`dist/` にも `functions/` にも入っていません。Cloudflare の環境変数にも入れないでください（手順6）。
+> **注意**: 手元の `npm run dev` と `npm run dev:api` が使う開発専用の秘密の値（`server/devApi.ts` の `DEV_BETTER_AUTH_SECRET`、`package.json` の `--binding`）は、`dist/` にも `functions/` にも入っていません。Cloudflare の環境変数にも入れないでください（手順6）。
 
 つなぐと、最初のデプロイが走ります。以降は、main にマージするたびに、自動で本番にデプロイされます。ブランチごとのプレビューのデプロイも、PR のブランチ（`issue-…`）で自動で作られます（アドレスは `https://<ハッシュ>.<サブドメイン>.pages.dev`。ダッシュボードの「Deployments」の一覧に出ます）。
 
 実際の本番のホスト名（`<本番のホスト名>`）は、ダッシュボードの「Workers & Pages」→ `meal-log` で確かめて、控えます。
 
-この時点では D1 の接続と環境変数がないので、API は 500（`DatabaseNotConfigured`。D1 をつないだ後は `AuthConfigurationError`）を返します。手順3-3から5で設定した後に、再デプロイします（再デプロイの方法は手順5）。
+この時点では D1 の接続と環境変数がないので、API は 500（`DatabaseNotConfigured`。D1 をつないだ後は `AuthConfigurationError`）を返します。手順3-3と手順5で設定した後に、再デプロイします（再デプロイの方法は手順5）。
 
 ### 3-3. D1 をつなぐ（バインディング）
 
@@ -133,11 +134,11 @@ API（Pages Functions）は、リポジトリ直下の `functions/`（`functions
 - Variable name: `DB`（この名前は変えない。コードが `env.DB` を読む）
 - D1 database: 手順1で作った `meal-log`
 
-ここでつなぐのは「Production」の環境だけです。「Preview」には、この本番の `meal-log` をつなぎません（Preview に同じデータベースを指すと、プレビューのデプロイが本番の記録を読み書きしてしまうため）。プレビューには、会員登録とログインを試すために、別に作るプレビュー用の D1 をつなぎます（手順9-1）。プレビューのデプロイには手順5の環境変数がなく、Access も掛かっていないので、プレビュー用の D1 をつないでも、記録は読み書きできません（API は 401 か 500 になります。手順7-4）。
+ここでつなぐのは「Production」の環境だけです。「Preview」には、この本番の `meal-log` をつなぎません（Preview に同じデータベースを指すと、プレビューのデプロイが本番の会員と記録を読み書きしてしまうため）。プレビューには、会員登録とログイン、記録を試すために、別に作るプレビュー用の D1 をつなぎます（手順9-1）。プレビューの会員と記録は、本番とは別のものです。
 
 ### 3-4. 環境変数
 
-環境変数は手順5で設定します。
+環境変数は手順5（本番）と手順9・10（プレビュー）で設定します。
 
 ## 4. Access のアプリケーションとポリシーを作る
 
@@ -157,82 +158,90 @@ API（Pages Functions）は、リポジトリ直下の `functions/`（`functions
 1. ダッシュボードの「Zero Trust」→「Access controls」→「Applications」を開き、4-1 で作られたアプリケーション（名前は `<プロジェクト名>` など）を編集する
 2. 「Application domain」（Public hostname）にある既存のホスト名（`*.<サブドメイン>.pages.dev`）を編集する。「Subdomain」の欄の `*` だけを消して、ホスト名を `<本番のホスト名>`（例: `meal-log-oqi.pages.dev`）にする（ホスト名を削除してから作り直さない）。ほかにワイルドカードのホスト名が残っていたら削除し、`<本番のホスト名>` だけにする
    - **Path は空にする**（サイト全体を守る。`/api` もこれで守られる）
-3. Session Duration: 好みの長さ（ログインの期限。切れると画面にエラーが出るので、読み込み直してログインし直す）
+3. Session Duration: 好みの長さ（Access のログインの期限。切れると、アプリはログインの画面に移るので、読み込み直して Access にログインし直す）
 4. 「Policies」を確認する。自動で作られたポリシーが、所有者だけを許可しているものにする
    - Action: `Allow`
    - Include: 「Emails」→ `<自分のメールアドレス>`（所有者のメールアドレスだけ。「Everyone」や「Emails ending in」にしない。自動で入った他の許可は削除する）
 5. 保存する
-6. AUD タグを控える（手順5で使う）。アプリケーションの編集画面（Zero Trust →「Access controls」→「Applications」→ アプリケーション名）の **Additional settings** のタブにある **Application Audience (AUD) Tag** です（「Details」のボタンの先には、名前とセッションの長さしかありません）。手順5の `ACCESS_AUD` には、この編集したアプリケーションの AUD タグを使う
 
-> **注意（失敗しやすい所）: Access で `/api` も守ること。** Path を空にしてサイト全体を守れば、`/api` も同じアプリケーションに入ります。「`/` だけ」「画面のパスだけ」のように Path を決めると、`/api` が守られず、Access を通らない API の呼び出しになります（API も JWT を検証するので 401 になりますが、守りは二重にしておく）。別のアプリケーションに分けるときは、`/api` にも同じ許可の Policy を付けてください。
+> **注意（失敗しやすい所）: Access で `/api` も守ること。** Path を空にしてサイト全体を守れば、`/api` も同じアプリケーションに入ります。「`/` だけ」「画面のパスだけ」のように Path を決めると、`/api` が Access で守られません（API は会員のログインを求めるので、記録は読み書きされませんが、公開の準備までは、守りは二重にしておく）。別のアプリケーションに分けるときは、`/api` にも同じ許可の Policy を付けてください。
 
-> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<サブドメイン>.pages.dev`）は、別のホスト名です。** 4-2 でワイルドカードを外すと、プレビューのアドレスには Access が掛からなくなります。手順7の「Access を通っていないときに 401 が返る」の確認では、この掛かっていないアドレスを使います。プレビューにも記録の API が公開されるのを避けるため、手順3-3 のとおり「Preview」に本番の `DB` と手順5の環境変数を設定しないでおきます。そうすれば、プレビューの API は記録を読み書きできません（401 か 500 になります。手順9-1 のプレビュー用の D1 をつないでも同じです）。
+> **注意: `pages.dev` のサブドメイン（`<ハッシュ>.<サブドメイン>.pages.dev`）は、別のホスト名です。** 4-2 でワイルドカードを外すと、プレビューのアドレスと、本番のデプロイごとのアドレスには Access が掛からなくなります。そこからは誰でも画面と会員登録を開けますが、記録の API は会員のログインを求めるので、ログインしていない人には 401 を返します（手順7-4）。プレビューは、本番とは別の D1（手順9-1）を使うので、本番の会員と記録は読み書きできません。
 
-Zero Trust の **チーム名** は、Zero Trust の **Overview** の「Account details」にある **Team domain**（`<チーム名>.cloudflareaccess.com`）の `<チーム名>` の部分です。控えます。その下の「Team name」は表示名なので、環境変数には使いません。
+API は Access のチーム名と AUD タグを使いません（以前の版で入れた `ACCESS_TEAM_NAME` と `ACCESS_AUD` は、残っていても読まれません）。
 
-## 5. Access のチーム名と AUD タグを、Pages の環境変数に設定する
+## 5. 本番の環境変数（会員のログインとメール）を入れる
 
-ダッシュボードの「Variables and secrets」に追加しても、再デプロイしても、API が 500（「環境変数 ACCESS_TEAM_NAME と ACCESS_AUD を設定してください」）のままだったことがあります。環境変数は、次のコマンドで入れます（Production）。
+本番の記録の API は、会員のログインで動きます。次の3つが本番にないと、記録の画面が使えません（`BETTER_AUTH_SECRET` がないと、記録の API とログインの API が 500 の `AuthConfigurationError`。メールの値がないと、会員登録が 500 の `MailConfigurationError`）。**この版を本番に出す（main にマージする）前に入れます。**
 
-```sh
-npx wrangler pages secret put ACCESS_TEAM_NAME --project-name meal-log
-npx wrangler pages secret put ACCESS_AUD --project-name meal-log
-```
+1. Resend の画面で、本番用の API キーを作る（手順10-1と同じ要領。名前は `meal-log-production`、権限は「Sending access」）。プレビューのキーとは別にする
+2. 秘密の値を作る（プレビューの `BETTER_AUTH_SECRET` とは別の値にする）
 
-値は、聞かれたときに貼ります（上のコマンドは1つずつ実行します）。
+   ```sh
+   openssl rand -base64 32
+   ```
 
-| 名前 | 値 |
-| --- | --- |
-| `ACCESS_TEAM_NAME` | `<チーム名>`（`<チーム名>.cloudflareaccess.com` の前の部分だけ。`https://` や `.cloudflareaccess.com` は付けない。英数字とハイフン） |
-| `ACCESS_AUD` | 手順4-2 で控えた AUD タグ（編集したアプリケーションのもの） |
+3. 本番に入れる（`--env preview` を付けない。値は聞かれたときに貼る。コマンドは1つずつ実行する）
 
-入ったことは、次のコマンドで確かめます（名前だけが表示されます）。
+   ```sh
+   npx wrangler pages secret put BETTER_AUTH_SECRET --project-name meal-log
+   npx wrangler pages secret put RESEND_API_KEY --project-name meal-log
+   npx wrangler pages secret put MAIL_FROM --project-name meal-log
+   ```
 
-```sh
-npx wrangler pages secret list --project-name meal-log
-```
+   | 名前 | 値 |
+   | --- | --- |
+   | `BETTER_AUTH_SECRET` | 2. で作った値 |
+   | `RESEND_API_KEY` | 1. で作ったキー（`re_…`） |
+   | `MAIL_FROM` | `onboarding@resend.dev`（ドメインを取った後は、そのドメインのアドレス。公開の準備の Issue） |
+
+4. 入ったことを確かめる（名前だけが表示されます）。`BETTER_AUTH_SECRET`、`RESEND_API_KEY`、`MAIL_FROM` の3つが出て、`MAIL_ALLOWED_TO` と、`DEV_` で始まる名前が出ないこと（手順6）
+
+   ```sh
+   npx wrangler pages secret list --project-name meal-log
+   ```
+
+5. 互換性フラグ `nodejs_compat` が「Production」に入っていることを確かめる（手順9-4。ないと、ログインの仕組みが動かず、記録の API も使えない）
+
+- Resend は、ドメインを確認するまで、Resend に登録した自分のアドレスにしか送れません。本番で会員登録するアドレスは、それにします
+- 値の決まり（推測されにくい長い文字列、リポジトリやメモに平文で残さない、変えるとそれまでのログインが切れる）は、手順9と同じです
 
 > **注意**: ダッシュボードの「Variables and secrets」に同じ名前の変数がすでにあるときは、先に削除してからコマンドで入れてください。
 
 > **注意**: 環境変数の変更は、次のデプロイから効きます。設定したら、再デプロイしてください。再デプロイの操作（ダッシュボードの Deployments からの再実行など）は、実機で確かめていません（未確認）。確かめられるまでは、main への次のマージで本番に出る、と考えてください。また、GitHub 連携のプロジェクトに `wrangler pages secret put` で入れた値が本番に効くかも、未確認です（効かないときは、ダッシュボードの「Settings」→「Variables and secrets」の「Production」に入れます）。
 
-## 6. 認証を省く設定（開発用）が本番に入っていないことを確かめる
+## 6. 開発用・プレビュー用の値が本番に入っていないことを確かめる
 
-`DEV_USER_EMAIL` を設定すると、API は JWT を検証せず、誰でもその人として記録を読み書きできます。本番とプレビューの環境のどちらにも、設定されていないことを確かめます。
+本番には、次の値を設定しません。本番とプレビューの環境を取り違えて入れていないことを確かめます。
 
-1. `DEV_USER_EMAIL` が設定されていない。あれば削除して、再デプロイする（手順5。方法は未確認）
-   - ダッシュボードの「Settings」→「Variables and secrets」に、`DEV_USER_EMAIL` がない（「Production」と「Preview」の両方）
-   - `npx wrangler pages secret list --project-name meal-log` の出力に、`DEV_USER_EMAIL` が出ない
-2. 手元のリポジトリの設定ファイルに書かれていない
+- `MAIL_ALLOWED_TO`（プレビュー専用）: 本番に入っていると、所有者以外にメールが届かず、会員登録できない
+- 名前が `DEV_` で始まるもの（手元の開発専用）: 本番のコードは読まないが、取り違えの印なので入れない
 
-```sh
-grep -rn DEV_USER_EMAIL wrangler.dev.jsonc wrangler.migrate.jsonc dist
-```
+1. 設定されていない。あれば削除して、再デプロイする（手順5。方法は未確認）
+   - ダッシュボードの「Settings」→「Variables and secrets」の「Production」に、`MAIL_ALLOWED_TO` と `DEV_` で始まる名前がない
+   - `npx wrangler pages secret list --project-name meal-log`（`--env preview` を付けない）の出力に出ない
+2. 開発専用の秘密の値（`server/devApi.ts` の `DEV_BETTER_AUTH_SECRET`）を、本番とプレビューの `BETTER_AUTH_SECRET` に使っていない（手順5、9-2 で `openssl rand` で作った値を使う）
 
-何も表示されなければ問題ありません（`wrangler.migrate.jsonc` がないときは、そのエラーは無視してよい）。
-
-3. 公開したサイトで実際に確かめる（手順7の「Access を通っていないときの 401」が、そのまま確認になります。`DEV_USER_EMAIL` が入っていると、401 ではなく 200 が返ります）
-
-> **注意**: `npm run dev:api` のコマンドには `--binding DEV_USER_EMAIL=dev@example.com` が入っています。これは手元の確認用です。Cloudflare のビルドの設定（Build command など）には付けず、`wrangler pages secret put` などでも設定しないでください。
+> **注意**: `npm run dev:api` のコマンドには、開発専用の `--binding BETTER_AUTH_SECRET=…` が入っています。これは手元の確認用です。Cloudflare のビルドの設定（Build command など）には付けず、`wrangler pages secret put` などでも設定しないでください。
 
 ## 7. 動作確認
 
-1. **開く**: ブラウザで `https://<本番のホスト名>` を開く。Access のログイン画面が出る。手順4-2 で許可したメールアドレスでログインすると、今日の記録の画面が開く
+1. **開く**: ブラウザで `https://<本番のホスト名>` を開く。Access のログイン画面が出る。手順4-2 で許可したメールアドレスで Access にログインすると、アプリのログインの画面（`#/login`）が開く
    - 許可していないメールアドレスでは、入れない（Access に拒否される）
-2. **記録する**: 昼の欄に品を追加する。読み込み直しても残っている
-3. **別の端末で見える**: 別の端末（またはシークレットウィンドウ）で同じアドレスを開き、同じメールアドレスでログインする。2. の記録が見える
-4. **Access を通っていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（プレビューのデプロイの `https://<ハッシュ>.<サブドメイン>.pages.dev`。ダッシュボードの「Deployments」の一覧にある。手順4-2 のとおり、ワイルドカードを外したので Access が掛かっていないもの）に、ログインなしで API を呼ぶ。プレビューには本番の `DB` の接続と手順5の環境変数がない（手順3-3）ので、ここで確かめられるのは「Access なしで記録が読み書きできない」ことです
+2. **会員登録とログイン**: 「会員登録へ」から、Resend に登録した自分のメールアドレスで会員登録する。届いた確認のメールのリンクを開き、ログインすると、今日の記録の画面が開く
+3. **記録する**: 昼の欄に品を追加する。読み込み直しても残っている
+4. **別の端末で見える**: 別の端末（またはシークレットウィンドウ）で同じアドレスを開き、同じ会員でログインする。3. の記録が見える
+5. **ログインしていないリクエストは API が 401 を返す**: Access が掛かっていないアドレス（本番のデプロイごとのアドレス `https://<ハッシュ>.<本番のホスト名>`。ダッシュボードの「Deployments」の一覧にある。手順4-2 のとおり、ワイルドカードを外したので Access が掛かっていないもの）に、ログインなしで API を呼ぶ
 
 ```sh
-curl -i 'https://<ハッシュ>.<サブドメイン>.pages.dev/api/meals'
+curl -i 'https://<ハッシュ>.<本番のホスト名>/api/meals'
 ```
 
-   - 期待する結果: `401`（本文は `{"error":{"type":"Unauthorized",…}}`）か、`500`（`AuthConfigurationError`、または、プレビューに D1 をつないでいないときは `DatabaseNotConfigured`）。プレビューには手順5の環境変数を入れていないため、`500` になることが多い。どれも、記録は読み書きされていない
-   - `200`: **危険**。`DEV_USER_EMAIL` が設定されている（Preview にも入っている）。すぐに手順6で消して、再デプロイする
-   - 本番に手順5の環境変数が効いているかは、この確認ではわかりません。手順7の1から3（ログインして記録できる）で確かめます。ログインしても API が `500`（`AuthConfigurationError`）のときは、本番の環境変数がない、または入れた後に再デプロイしていない
-   - 本番のアドレス（Access が掛かっている）を、ログインなしで `curl` すると、API より前に Access がログインの画面への転送（302）や 403 を返します。これも、守られている印です
+   - 期待する結果: `401`（本文は `{"error":{"type":"Unauthorized",…}}`）。記録は読み書きされていない
+   - `500`（`AuthConfigurationError`）: 本番に `BETTER_AUTH_SECRET` がない、または入れた後に再デプロイしていない（手順5）
+   - 本番のアドレス（Access が掛かっている）を、Access のログインなしで `curl` すると、API より前に Access がログインの画面への転送（302）や 403 を返します。これも、守られている印です
 
-5. **ログインの期限切れ**: Session Duration が過ぎた後に操作すると、画面に「ログインの期限が切れました。ページを読み込み直してください」と出る。読み込み直すとログインの画面になる（正しい動作）
+6. **ログインの期限切れ**: 使っている途中でログインが切れると（ほかの端末でパスワードを再設定したときなど）、アプリはログインの画面に移り、「ログインの期限が切れました。ログインし直してください」と出る。Access の Session Duration が過ぎたときも、同じ表示になる。読み込み直して、Access とアプリにログインし直す（正しい動作）
 
 ## 8. 古い版（localStorage）の記録をサーバーへ移す
 
@@ -246,9 +255,22 @@ curl -i 'https://<ハッシュ>.<サブドメイン>.pages.dev/api/meals'
 
 > **注意**: 以前の版の記録は、書き出すまでは、そのブラウザの中にしかありません。以前の版のサイト（アドレス）のデータを消す前に、必ず書き出して、移ったことを確かめてください。
 
+### 8-1. Access のメールアドレスごとの記録を、会員の記録へ移す
+
+記録を会員ごとに分ける版（表 `member_meals`）より前は、記録を Access のメールアドレスごとに、表 `meals` に保存していました。新しい版の API は、表 `meals` を読みません。自動では移らないので、書き出しと読み込みで移します（ファイルの形は同じです）。
+
+1. **新しい版を本番に出す前に**、今の本番を開き、データ画面の「書き出す」でファイル（`meal-log-YYYY-MM-DD.json`）を保存する。新しい版を出した後は、この方法では書き出せない
+2. 手順5の3つの値を本番に入れてから、新しい版を本番に出す（main にマージする）
+3. 本番のアドレスを開き、会員登録（Resend に登録した自分のアドレス）→ 確認のメールのリンクを開く → ログインする（手順7の1、2）
+4. データ画面の「読み込む」で、1. のファイルを選び、「取り込む」を押す
+5. 記録の画面とカレンダーで、記録が移ったことを確かめる
+
+- 古い表 `meals` は、移したことを確かめるまで残します（消すのは別の Issue）
+- 書き出したファイルは、どの会員のアカウントでも読み込めます。同じファイルを2回読み込んでも、記録は増えません
+
 ## 9. 会員のログインの準備（プレビュー用の D1 と、秘密の値 `BETTER_AUTH_SECRET`）
 
-会員の登録とログイン（`/api/auth/`。README の「ログインの API」）は、セッションなどの署名に、秘密の値 `BETTER_AUTH_SECRET` を使います。入っていないときは、`/api/auth/` だけが 500（`AuthConfigurationError`）になります。記録の API（`/api/meals` など）は、入っていなくても今までどおり動きます。
+会員の登録とログイン（`/api/auth/`。README の「ログインの API」）は、セッションなどの署名に、秘密の値 `BETTER_AUTH_SECRET` を使います。入っていないときは、`/api/auth/` と記録の API（`/api/meals` など）が 500（`AuthConfigurationError`）になります。
 
 - 値は、推測されにくい長いランダムな文字列にする。本番とプレビューで**別の値**にする（プレビューの値が漏れても、本番のセッションを作れないようにする）
 - 値はリポジトリやメモに平文で残さない。手元の `npm run dev` と `npm run dev:api` が使う開発専用の値（`server/devApi.ts`、`package.json`）は、本番にもプレビューにも使わない
@@ -277,7 +299,7 @@ openssl rand -base64 32
 
 表は、アプリが最初のリクエストで自分で作ります（マイグレーションを手で当てる必要はありません。「更新するとき」）。つないだことは、プレビューのアドレスの `/api/health` が `200` と `{"migrations":[…]}` を返すことで確かめます（つないでいないときは `500` の `DatabaseNotConfigured`）。画面の名前や場所は、Cloudflare の更新で変わることがあります（この手順は実機で確かめていません）。
 
-プレビュー用の D1 をつないでも、プレビューには手順5の環境変数がないので、記録の API（`/api/meals` など）は 500（`AuthConfigurationError`）のままで、記録は読み書きできません（手順7-4）。
+プレビュー用の D1 と、手順9-2 の秘密の値を入れると、プレビューでも、会員登録してログインすれば記録を読み書きできます。プレビューの会員と記録は、プレビュー用の D1 にだけ入ります（本番の D1 とは別）。
 
 ### 9-2. プレビューの秘密の値
 
@@ -289,11 +311,7 @@ npx wrangler pages secret put BETTER_AUTH_SECRET --project-name meal-log --env p
 
 ### 9-3. 本番の秘密の値
 
-本番の値は、**公開（Access を外す）の直前**に入れればよいです。入れなくても、今の本番（Access で守った記録の画面と API）は壊れません。
-
-```sh
-npx wrangler pages secret put BETTER_AUTH_SECRET --project-name meal-log
-```
+本番の `BETTER_AUTH_SECRET` は、手順5で、メールの値と一緒に入れます（記録の API が会員のログインで動くので、本番で必須です）。
 
 入ったことは `npx wrangler pages secret list --project-name meal-log`（プレビューは `--env preview` を付ける）で確かめます（名前だけが表示されます）。手順5の注意のとおり、次のデプロイから効きます。
 
@@ -301,7 +319,7 @@ npx wrangler pages secret put BETTER_AUTH_SECRET --project-name meal-log
 
 Better Auth は、Node.js の `AsyncLocalStorage` を使います。ダッシュボードの「Workers & Pages」→ `meal-log` →「Settings」→「Runtime」の **Compatibility flags** に、`nodejs_compat` を「Production」と「Preview」の両方で入れます（手元は `wrangler.dev.jsonc` と `npm run dev:api` に入っています）。画面の名前や場所は、Cloudflare の更新で変わることがあります（この手順は実機で確かめていません）。
 
-- 入れなくても、ビルドと記録の API は動きます。ログインの API が動かない（500 になる）ときは、このフラグを確かめる
+- 記録の API も会員のログイン（Better Auth）で本人を確かめるので、このフラグがないと、ログインの API と記録の API の両方が動きません（500 になる）。本番の「Production」に入っていることを、この版を本番に出す前に確かめてください（プレビューで試しても、本番の設定の抜けは見つかりません）
 
 ### 9-5. 確かめる
 
@@ -309,9 +327,9 @@ Better Auth は、Node.js の `AsyncLocalStorage` を使います。ダッシュ
 
 ## 10. メールの準備（Resend）
 
-会員登録の確認のメールは、Resend（<https://resend.com>）で送ります（README の「メールの部品」）。メールの値が入っていないときは、会員登録と確認のメールの送り直しだけが 500（`MailConfigurationError`）になります。記録の API とログインの確かめは、入っていなくても動きます。
+会員登録の確認のメールは、Resend（<https://resend.com>）で送ります（README の「メールの部品」）。メールの値が入っていないときは、会員登録と確認のメールの送り直しが 500（`MailConfigurationError`）になり、会員登録できません（会員がいないと、記録の画面も使えません）。
 
-Resend は、ドメインを確認するまでは、試験用の送信元（`onboarding@resend.dev`）から、Resend のアカウントの持ち主（所有者）のアドレスにしか送れません。そのため、今はプレビューだけに入れ、所有者のアドレスに届くことを確かめます。
+Resend は、ドメインを確認するまでは、試験用の送信元（`onboarding@resend.dev`）から、Resend のアカウントの持ち主（所有者）のアドレスにしか送れません。プレビューには、ここで入れ、所有者のアドレスに届くことを確かめます。本番の値は手順5で入れます。
 
 ### 10-1. Resend の API キーを作る（ブラウザ）
 
@@ -361,10 +379,10 @@ PR のプレビューのデプロイのアドレスで、次を確かめます�
 
 ### 10-4. 本番の値
 
-本番の `RESEND_API_KEY` と `MAIL_FROM` は、ドメインを取り、Resend でドメインを確認した後（公開の準備の Issue）に入れます。今は入れません。入れなくても、今の本番（Access で守った記録の画面と API）は壊れません。
+本番の `RESEND_API_KEY` と `MAIL_FROM` は、手順5で入れます（本番用のキーと、`onboarding@resend.dev`）。ドメインを取り、Resend でドメインを確認した後（公開の準備の Issue）に、`MAIL_FROM` をそのドメインのアドレスに変えます。
 
-- 本番の `MAIL_FROM` は、取ったドメインのアドレス（例: `no-reply@<ドメイン>`）にする
-- 本番には `MAIL_ALLOWED_TO` を**設定しない**（設定すると、所有者以外にメールが届かなくなる）
+- 本番の `MAIL_FROM` は、ドメインを取った後は、そのドメインのアドレス（例: `no-reply@<ドメイン>`）にする
+- 本番には `MAIL_ALLOWED_TO` を**設定しない**（設定すると、所有者以外にメールが届かなくなる。手順6）
 
 ## 更新するとき
 

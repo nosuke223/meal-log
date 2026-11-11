@@ -6,11 +6,11 @@
 
 画面はスマホの縦画面を優先しています。アプリを開くと、今日の記録の画面が表示されます。
 
-記録はサーバー（Cloudflare Pages Functions と D1）に、ログインしている人ごとに保存します。別のブラウザや別の端末で開いても、同じ人なら同じ記録が見えます（ブラウザ内には記録を残しません）。通信が切れているときは使えません。
+記録はサーバー（Cloudflare Pages Functions と D1）に、ログインした会員ごとに保存します。記録の画面、カレンダー、データ画面は、会員登録してログインすると使えます。別のブラウザや別の端末でログインしても、同じ会員なら同じ記録が見えます。他の会員の記録は見えず、変えられません（ブラウザ内には記録を残しません）。通信が切れているときは使えません。
 
 公開サービス化の計画と進み具合: [PLAN.md](PLAN.md)
 
-Cloudflare への公開と Access（所有者だけが開けるようにする設定）の手順は、[docs/deploy.md](docs/deploy.md) にあります。
+Cloudflare への公開と Access（公開の準備までの間、サイト全体を所有者だけが開けるようにする設定）の手順は、[docs/deploy.md](docs/deploy.md) にあります。
 
 ## 記録の画面でできること
 
@@ -23,7 +23,7 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 - 品の変更・削除: 追加済みの品をタップすると、品名、ジャンル、料理の分類、区分、日付を変更できる。区分を変えると変更先の欄に、日付を変えるとその日に移る。「削除」は確認の後に行う
 - エラー: 通信の失敗やサーバーのエラーなどで、読み込みや保存に失敗したときは画面にエラーを表示する。保存されている記録は消えない（入力中の品名も残る）
   - 保存（追加、変更、削除、予定と食べたの切り替え）はできたが、その後の一覧の読み直しだけに失敗したときは「保存しました。一覧を読み込めませんでした: …」と表示する。保存できたときと同じく、入力欄は空になり、変更の欄は閉じる。一覧は前の表示のままで、次に読み直しに成功すると（次の保存や、画面を開き直したときなど）、エラーが消えて最新になる
-  - ログインの期限が切れたときは「ログインの期限が切れました。ページを読み込み直してください」と表示する。読み込み直すとログインの画面になる
+  - 使っている途中でログインの期限が切れたとき（API が 401 を返した。ログアウトした、ほかの端末でパスワードを再設定したなども含む）は、ログインの画面（`#/login/session-expired`）に移り、「ログインの期限が切れました。ログインし直してください」と出す
 - 保存先は、サーバー（下の「サーバーの API」）。画面の部品は「保存の窓口」だけを使う
 - 最新の記録の読み直し: 開いたままのタブや画面に戻ってきたときに、記録の画面とカレンダーは、保存されている記録を読み直す（別の端末やタブで追加・変更・削除した品が、ページを読み込み直さずに表示される）。一定の時間ごとには読み直さない
   - 入力中の品名と、選んだジャンル・料理の分類は残る
@@ -37,10 +37,12 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 
 ## 会員登録とログイン
 
-メールアドレスとパスワードで、会員登録とログイン・ログアウトができます（公開サービスにするための準備。今は、記録の読み書きは会員ごとに分かれず、これまでどおり Access のログインで動きます）。
+メールアドレスとパスワードで、会員登録とログイン・ログアウトができます。記録は、ログインした会員ごとに分けて保存します。
 
+- ログインしていないと開けない画面: 記録の画面、カレンダー、データ画面。開くと、ログインしているかを確かめ、ログインしていなければログインの画面（`#/login`）に移る（履歴は増やさない）。ログインの画面、会員登録、「パスワードを忘れた」、再設定、アカウントの画面は、ログインしていなくても開ける
 - アカウントの画面（記録の画面の「アカウント」ボタン）: ログイン中のメールアドレスと「ログアウト」を出す。ログインしていなければ、ログインの画面を出す
-- ログインの画面: メールアドレスとパスワードを入れて「ログイン」。ログインしたら、今日の記録の画面に移る。「会員登録へ」で会員登録の画面に移る。「パスワードを忘れた」で再設定のメールを送る画面（`#/forgot`）に移る
+- ログインの画面: メールアドレスとパスワードを入れて「ログイン」。ログインしたら、今日の記録の画面に移る（ログインの画面に移る前に開いていた画面には戻らない）。「会員登録へ」で会員登録の画面に移る。「パスワードを忘れた」で再設定のメールを送る画面（`#/forgot`）に移る
+- ログアウトしたとき、別の会員でログインしたときは、前の会員の記録を画面に残さない（記録の画面、カレンダー、データ画面は、初めから読み込む）
 - 会員登録の画面: メールアドレスとパスワード（8文字以上）を入れて「登録する」。登録すると「確認のメールを送りました。メールのリンクを開いてください」と出る（ログインした状態にはならない）
 - メールアドレスは大文字と小文字を区別しない（小文字にそろえて保存する）
 - 入力のエラー（パスワードが短い、メールアドレスの形が違う、パスワードが違う、試す回数の上限を超えた）は、フォームの上に日本語で出す
@@ -134,8 +136,10 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 以前の版（記録をブラウザ内の localStorage に保存していた版）の記録は、自動では移りません。次の手順で移します。
 
 1. 以前の版を、記録を入れていたブラウザで開き、データ画面の「書き出す」でファイル（`meal-log-YYYY-MM-DD.json`）を保存する
-2. 新しい版（サーバーに保存する版）を開いてログインし、データ画面の「読み込む」で、1. のファイルを選んで取り込む
-3. 記録の画面やカレンダーで、記録が移ったことを確かめる。別の端末でも、同じ人でログインすると同じ記録が見える
+2. 新しい版（サーバーに保存する版）を開いて会員登録・ログインし、データ画面の「読み込む」で、1. のファイルを選んで取り込む
+3. 記録の画面やカレンダーで、記録が移ったことを確かめる。別の端末でも、同じ会員でログインすると同じ記録が見える
+
+書き出したファイルは、別の会員のアカウントでも読み込めます（Cloudflare Access のメールアドレスごとに保存していた版の記録を、会員の記録に移すときも、同じ手順です。`docs/deploy.md`）。
 
 ファイルの形は以前の版と同じなので、そのまま読み込めます。同じファイルを2回読み込んでも、記録は増えません（同じ `id` は「変更なし」になる）。
 
@@ -179,6 +183,7 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 | `#/login` | ログインの画面 |
 | `#/login/<結果>` | 確認のメールのリンクを開いた結果を出したログインの画面（API が転送する）。結果は `verified`（確認できた）、`link-used`（使用済み）、`link-expired`（期限切れ）、`link-invalid`（正しくない）、`link-error`（サーバーのエラー）。知らない結果は、ただのログインの画面 |
 | `#/login/password-reset` | パスワードを再設定した後のログインの画面（「パスワードを変更しました。ログインしてください」と出す） |
+| `#/login/session-expired` | 使っている途中でログインの期限が切れたときのログインの画面（「ログインの期限が切れました。ログインし直してください」と出す）。ログインしていない人が記録の画面などを初めて開いたときは、ただの `#/login` に移る |
 | `#/signup` | 会員登録の画面 |
 | `#/forgot` | パスワードの再設定のメールを送る画面 |
 | `#/reset` | 新しいパスワードを決める画面。再設定のメールのリンク `#/reset/<トークン>` を開くと、トークンを画面の中に持ち、アドレスをこの `#/reset` に置き換える（履歴は増やさない）。トークンがないときは「リンクをもう一度開いてください」 |
@@ -224,19 +229,21 @@ npm run dev
 手元の D1 にマイグレーションを適用してから、Vite の開発サーバーを起動します（<http://localhost:5173>）。画面の変更はすぐに反映されます。
 
 - `/api/` 以下は、開発サーバーの中で API（`server/api.ts`）が処理する（`server/devApi.ts`。Vite のプラグイン）。保存先は手元の D1（`.wrangler/` の下。`npm run dev:api` と同じ）
-- 認証は省き、`dev@example.com` の人として扱う（下の「認証」の `DEV_USER_EMAIL`）
-- メールは実際には送らず、開発サーバーの中にためる（起動し直すと消える）。ためたメールは <http://localhost:5173/__dev/mails?to=<宛先のメールアドレス>> で読める（JSON。e2e は、ここから確認のメールと再設定のメールのリンクを読んで開く）。送信元は `onboarding@resend.dev`
-- この仕組みは開発サーバーだけのもの。`npm run build` の出力と、本番の API（`functions/`）には入らないので、本番では必ず Access の認証を通る
+- 認証は省かない（本番と同じく、会員のログインが要る）。使うときは、画面で会員登録し、届いた確認のメールのリンクを開いてから、ログインする
+- メールは実際には送らず、開発サーバーの中にためる（起動し直すと消える）。ためたメールは <http://localhost:5173/__dev/mails?to=<宛先のメールアドレス>>（`GET /__dev/mails?to=<宛先>`）で読める（JSON。本文の `text` に確認のリンクがある。e2e は、ここから確認のメールと再設定のメールのリンクを読んで開く）。送信元は `onboarding@resend.dev`
+- メールをためる仕組みと、開発専用の秘密の値（`DEV_BETTER_AUTH_SECRET`）は、開発サーバーだけのもの。`npm run build` の出力と、本番の API（`functions/`）には入らない
 - 手元の D1 の設定は `wrangler.dev.jsonc` にある（手元とテスト専用。本番の D1 のデータベース ID は書かない）。名前を `wrangler.toml` などにすると、Pages の本番の設定として読まれるので、変えない
 - 本番に近い形（Pages Functions の実行環境）で確かめるときは `npm run dev:api`（画面をビルドし、`wrangler pages dev` で画面と API を起動する。画面のファイルを変えたら、起動し直す）。`npm run dev:api` には、メールをためる仕組みがなく、メールの環境変数も設定しないので、会員登録と確認のメールの送り直しは 500（`MailConfigurationError`）になる
 
 ### 画面を操作するテスト（e2e）の記録
 
-`npm run e2e` は、`npm run dev` の開発サーバー（手元の D1）を使います。テストごとに記録が混ざらないよう、テストごとに別の人（`e2e-<ランダム>@example.com`）として記録を読み書きします。
+`npm run e2e` は、`npm run dev` の開発サーバー（手元の D1）を使います。テストごとに記録が混ざらないよう、テストごとに別の会員（`e2e-<ランダム>@example.com`）を作って、ログインした状態から始めます（`e2e/fixtures.ts`）。
 
-- 開発サーバーの API は、ヘッダー `X-Dev-User-Email` があると、その値の人として扱う（開発サーバーだけ。本番の API はこのヘッダーを読まない）。e2e は、ブラウザの送るすべてのリクエストにこのヘッダーを付ける（`e2e/fixtures.ts`）
-- テストの準備（記録を入れる）と確かめ（保存された記録を読む）は、同じ人として API を直接呼んで行う
-- テストの人の記録は手元の D1 に残る。消したいときは `.wrangler/` を消す（手元で `npm run dev` で入れた記録も消える）
+- 会員の作り方: API で会員登録（`POST /api/auth/sign-up/email`）→ 開発サーバーにためた確認のメール（`/__dev/mails`）のリンクを開いて確認 → API でログイン（`POST /api/auth/sign-in/email`）。そのセッションの cookie を、ブラウザ（`storageState`）と、テストの準備・確かめ用の API の窓口（`MealApi`）の両方に渡す
+- テストの準備（記録を入れる）と確かめ（保存された記録を読む）は、同じ会員のセッションで API を直接呼んで行う
+- ログインの試す回数の上限（IP アドレスごと）に当たらないよう、テストごと、会員を作るごとに、別の接続元（`CF-Connecting-IP`。試験用の範囲 `198.18.0.0/15` のランダムな値）にする。開発サーバーは、このヘッダーがあればそのまま使う
+- 会員登録やログインそのものを試すテスト（`e2e/account.spec.ts`）は、`test.use({ signedIn: false })` で、ログインしていない状態から始める
+- テストの会員と記録は手元の D1 に残る。消したいときは `.wrangler/` を消す（手元で `npm run dev` で入れた会員と記録も消える）
 
 ## 記録の形
 
@@ -290,19 +297,19 @@ npm run dev
 
 `createApiMealRepository()`（`src/meals/apiMealRepository.ts`）は、サーバーの API（下の「サーバーの API」）を呼ぶ窓口を作ります。アプリは `src/meals/defaultMealRepository.ts` でこの窓口を作って使います。
 
-- 同じオリジンの `/api/` を呼ぶ。ログインの情報（Access の cookie）は、ブラウザが付ける
+- 同じオリジンの `/api/` を呼ぶ。ログインの情報（会員のセッションの cookie）は、ブラウザが付ける
 - `markPlannedAsEatenBefore(date)` の `date` は、画面が端末の現地の今日の日付を渡す（サーバーの時刻からは決めない）
 - API のエラーは、次のように窓口のエラーにする（画面は、ほかの保存先と同じようにエラーを表示する）
 
 | API の応答 | 窓口のエラー |
 | --- | --- |
 | 届かない（通信の失敗） | `MealStorageError`（「サーバーに接続できませんでした。通信の状態を確かめてください」。`cause` に元のエラー） |
-| 401、またはログイン画面への転送（3xx） | `MealStorageError`（「ログインの期限が切れました。ページを読み込み直してください」） |
+| 401、またはログイン画面への転送（3xx） | `LoginExpiredError`（`MealStorageError` の一種。「ログインの期限が切れました。ログインし直してください」）。画面は、これを受け取ると、ログインの画面（`#/login/session-expired`）に移る |
 | 400 | `MealValidationError`（メッセージはサーバーのもの） |
 | 404（`type` が `MealNotFoundError`） | `MealNotFoundError`（`get` では `null`） |
 | ほかのエラー（500、ない API のアドレスの 404 など）、成功の応答が JSON として読めない | `MealStorageError` |
 
-- Cloudflare Access は、ログインの期限が切れると、ログイン画面（別のオリジン）へ転送する。転送をたどると通信の失敗と見分けられないので、転送はたどらず（`redirect: 'manual'`）、ログインの期限切れとして扱う
+- 公開の準備までは、サイト全体を Cloudflare Access が守っている。Access は、Access のログインの期限が切れると、ログイン画面（別のオリジン）へ転送する。転送をたどると通信の失敗と見分けられないので、転送はたどらず（`redirect: 'manual'`）、ログインの期限切れとして扱う
 
 ### ブラウザ内の保存（画面のテスト用）
 
@@ -317,7 +324,8 @@ npm run dev
 
 - 入口は `functions/api/[[path]].ts`（`/api/` 以下のすべて）。処理は `server/api.ts`、D1 への保存は `server/d1MealRepository.ts`（窓口 `MealRepository` と同じ操作）
 - 検査の規則、並び順、作成日時の決め方は、ブラウザ内の窓口と同じ（`src/meals/mealRecord.ts` と `src/meals/repositoryRules.ts` を共有する）
-- 記録は、ログインしている人（メールアドレス）ごとに分けて保存する。すべての読み書きをその人の記録に絞るので、他の人の記録は、見えず、変えられない。別の人が同じ `id` の記録を取り込んでも、それぞれ別の記録になる
+- 記録は、ログインした会員（会員の ID）ごとに分けて保存する（表 `member_meals`）。すべての読み書き（一覧、期間、1件の取得、更新、削除、一括の取り込み、日が過ぎた予定の更新）をその会員の記録に絞るので、他の会員の記録は、見えず、変えられない（記録の ID を知っていても 404）。別の会員が同じ `id` の記録を取り込んでも、それぞれ別の記録になる
+- 処理の順番: マイグレーション → `GET /api/health` → ログインの API（`/api/auth/`）→ 会員の確かめ → 記録の API
 
 ### アドレスの表
 
@@ -343,13 +351,15 @@ npm run dev
 - 一覧の取得の条件は、なし・`date`・`from` と `to` のどれか。ほかの組み合わせは 400
 - 一括の取り込みは、全部保存するか、何も保存しないかのどちらか（D1 の batch で、1つのトランザクションにする）。記録は100件ずつ JSON の文字列1つにまとめて渡すので、数百件でも D1 の変数の個数の上限に当たらない
 - 書き込み（`POST`、`PATCH`、`DELETE`）は、`Content-Type: application/json` のリクエストだけを受け付ける（`DELETE` も付ける。他の Web サイトのフォームからの送信を防ぐため）。ほかは 415
+- 書き込みは、cookie で認証するので、`Origin` ヘッダーがあって、リクエストのオリジンと違うときは 403（`Forbidden`）。`Origin` のないリクエスト（`curl` など）は、そのまま受け付ける
 - 応答には `Cache-Control: no-store` を付ける
 
-例（`npm run dev:api` で起動したとき。`npm run dev` のときは `http://localhost:5173`）:
+例（`npm run dev` で起動し、画面で会員登録・確認を済ませた会員で。`npm run dev:api` のときは `http://localhost:8788`）:
 
 ```sh
-curl 'http://localhost:8788/api/meals?date=2026-11-06'
-curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json' -d '{"date":"2026-11-06","mealType":"lunch","name":"うどん","status":"eaten"}'
+curl -c cookies.txt -X POST http://localhost:5173/api/auth/sign-in/email -H 'Content-Type: application/json' -H 'Origin: http://localhost:5173' -d '{"email":"<メールアドレス>","password":"<パスワード>"}'
+curl -b cookies.txt 'http://localhost:5173/api/meals?date=2026-11-06'
+curl -b cookies.txt -X POST http://localhost:5173/api/meals -H 'Content-Type: application/json' -d '{"date":"2026-11-06","mealType":"lunch","name":"うどん","status":"eaten"}'
 ```
 
 ### ログインの API（`/api/auth/`）
@@ -367,9 +377,9 @@ curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json'
 | ログアウト | `POST /api/auth/sign-out` | `{}` | 200。セッションを D1 から消し、cookie を消す |
 | ログイン中の会員 | `GET /api/auth/get-session` | なし | 200 `{ "user": …, "session": … }`。ログインしていなければ `null` |
 
-- マイグレーションを当てた後、Access の JWT の確かめより前に処理する（`/api/health` と同じ位置）。Access を外した公開の後も動くようにするため。Access の JWT がなくても動く
-- 認証の初期化は `/api/auth/` に来たときだけ行う。`BETTER_AUTH_SECRET` がないときは 500（`AuthConfigurationError`）。ほかの API には影響しない
-- ログインの cookie だけでは、記録の API（`/api/meals` など）は使えない（記録は、まだ Access のログインで読み書きする）
+- マイグレーションと `/api/health` の後、会員の確かめより前に処理する（ログインしていなくても使う）
+- `BETTER_AUTH_SECRET` がないときは 500（`AuthConfigurationError`）。記録の API も、会員を確かめられないので同じく 500 になる
+- 記録の API（`/api/meals` など）は、ここで出したセッションの cookie で使う（下の「認証」）
 - パスワードは8文字以上。メールアドレスは小文字にそろえる。メールアドレスの確認が済むまで、ログインできない（上の「登録とログインの流れ」）
 - 確認のメールのリンクは、API のアドレス（`/api/auth/verify-email?token=…`）。画面のアドレスはハッシュ（`#/…`）なので、トークンはクエリにして API で受け取り、確認の結果をハッシュのアドレス（`/#/login/<結果>`）にして転送する。トークンは、Better Auth が秘密の値 `BETTER_AUTH_SECRET` で署名したもの（有効期限は24時間）。使用済みかどうかは、確かめる前に、その会員が確認済みだったかで見分ける
 - 基準のアドレス（オリジン）は、リクエストのアドレスから決める（プレビューは公開ごとにアドレスが変わるため）。ほかのオリジンからのリクエスト（`Origin` がない cookie 付きのリクエストも）は 403
@@ -411,13 +421,14 @@ curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json'
 | 状態コード | `type` | 場合 |
 | --- | --- | --- |
 | 400 | `MealValidationError` | 不正な値（窓口の `MealValidationError` と同じ規則）。本文が JSON のオブジェクトとして読めないときも |
-| 401 | `Unauthorized` | JWT がない、検証に失敗した（署名が違う、期限切れ、AUD やチームが違う、メールアドレスがないなど） |
-| 404 | `MealNotFoundError` | 存在しない ID の取得・更新・削除（他の人の記録の ID も） |
+| 401 | `Unauthorized` | 記録の API で、ログインしていない（セッションの cookie がない）、セッションが無効か期限切れ（ログアウトした後も）、メールアドレスの確認が済んでいない |
+| 403 | `Forbidden` | 記録の API の書き込みで、`Origin` がリクエストのオリジンと違う |
+| 404 | `MealNotFoundError` | 存在しない ID の取得・更新・削除（他の会員の記録の ID も） |
 | 404 | `RouteNotFound` | ない API のアドレス |
 | 405 | `MethodNotAllowed` | アドレスが対応していないメソッド（`Allow` ヘッダーに使えるメソッド） |
 | 415 | `UnsupportedMediaType` | 書き込みの `Content-Type` が `application/json` でない |
 | 500 | `MealStorageError` | 保存先（D1）の失敗、保存データが壊れている |
-| 500 | `AuthConfigurationError` | 認証の環境変数が足りない・不正、Access の公開鍵を取得できない |
+| 500 | `AuthConfigurationError` | 認証の環境変数 `BETTER_AUTH_SECRET` が足りない（ログインの API と記録の API） |
 | 500 | `DatabaseNotConfigured` | D1 がつながっていない（Pages の設定で、D1 を `DB` の名前でつないでいない） |
 | 500 | `MigrationError` | 表の変更（マイグレーション）を当てられなかった（詳しい内容は応答に出さず、サーバーのログに残す） |
 | 500 | `MailConfigurationError` | メールの環境変数（`RESEND_API_KEY`、`MAIL_FROM`）が足りないので、メールを送れない（会員登録、確認のメールの送り直し。再設定のメールは、登録の有無を探られないよう 200 のまま、記録にだけ残す） |
@@ -427,39 +438,36 @@ curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json'
 
 ### 認証
 
-Cloudflare Access が付けるヘッダー `Cf-Access-Jwt-Assertion` の JWT を検証し、中のメールアドレス（`email`）の人として扱います。
+記録の API は、会員のログイン（上の「ログインの API」）のセッションの cookie で、本人を確かめます（`server/memberAuth.ts` の `getMember`。Better Auth の `getSession` を使う）。
 
-- 署名（RS256）を、Access の公開鍵（`https://<チーム名>.cloudflareaccess.com/cdn-cgi/access/certs`）で確かめる。公開鍵は1時間使い回し、知らない鍵（`kid`）のときは取り直す
-- 発行元（`iss`）がそのチーム、`aud` に AUD タグが入っている、期限（`exp`）が切れていない、`nbf` が過ぎている、`email` がある、をすべて確かめる
-- メールアドレスは大文字と小文字を区別しない（小文字にそろえて保存・比較する）
+- セッションは、リクエストごとに D1 で確かめる。ログアウトした、パスワードを再設定した、期限が切れたセッションは使えない
+- メールアドレスの確認が済んでいない会員のセッションは、ログインしていないのと同じに扱う（401）
+- 会員の ID（表 `user` の `id`）で、記録を絞る
+- 公開の準備までは、Cloudflare Access がホスト全体を守っている（`docs/deploy.md`）が、API は Access のログインの情報を見ない（本人の確かめには、会員のセッションだけを使う）
 
 ### 環境変数
 
 | 名前 | 内容 | 本番 |
 | --- | --- | --- |
 | `DB` | D1 のデータベース（バインディング） | 設定する（Cloudflare 側で） |
-| `ACCESS_TEAM_NAME` | Access のチーム名（`<チーム名>.cloudflareaccess.com` の `<チーム名>`。英数字とハイフン） | 設定する |
-| `ACCESS_AUD` | Access のアプリケーションの AUD タグ | 設定する |
-| `DEV_USER_EMAIL` | 手元の開発とテスト専用。設定すると JWT を検証せず、このメールアドレスの人として扱う | **本番に設定しない** |
-| `BETTER_AUTH_SECRET` | 会員のログイン（Better Auth）が、セッションなどの署名に使う秘密の値（推測されにくい長いランダムな文字列） | 設定する（秘密の値として。本番とプレビューで別の値） |
-| `RESEND_API_KEY` | メールを送る Resend の API キー（`re_…`）。秘密の値 | ドメインを取った後に設定する（公開の準備の Issue）。プレビューには設定する |
-| `MAIL_FROM` | メールの送信元のアドレス（例: `onboarding@resend.dev`）。表示名は meal-log になる | ドメインを取った後に、そのドメインのアドレスを設定する。プレビューは `onboarding@resend.dev` |
+| `BETTER_AUTH_SECRET` | 会員のログイン（Better Auth）が、セッションなどの署名に使う秘密の値（推測されにくい長いランダムな文字列） | **必須**（秘密の値として。本番とプレビューで別の値） |
+| `RESEND_API_KEY` | メールを送る Resend の API キー（`re_…`）。秘密の値 | **必須**（本番用のキー。プレビューとは別） |
+| `MAIL_FROM` | メールの送信元のアドレス（例: `onboarding@resend.dev`）。表示名は meal-log になる | **必須**（ドメインを取るまでは `onboarding@resend.dev`。取った後は、そのドメインのアドレス） |
 | `MAIL_ALLOWED_TO` | 任意（プレビュー用）。設定すると、このアドレスにしかメールを送らない（カンマで区切って複数書ける）。ほかの宛先は、送らずに記録だけ残す | **本番に設定しない**（設定すると、所有者以外にメールが届かなくなる） |
 
-- `DEV_USER_EMAIL` が設定されていない（空も含む）ときは、必ず JWT を検証する。本番に設定すると、誰でもその人として記録を読み書きできてしまうので、絶対に設定しない
-- 手元では、`npm run dev`（`server/devApi.ts`）と `npm run dev:api`（コマンドの `--binding`）が、起動するときだけ設定する。リポジトリの設定ファイル（`wrangler.dev.jsonc` など）には書かない
-- 本番の値（D1 のデータベース ID、チーム名、AUD タグ、`BETTER_AUTH_SECRET`）は、リポジトリに書かず、Cloudflare 側で設定する（`docs/deploy.md`）
-- `BETTER_AUTH_SECRET` がないときは、`/api/auth/` 以下だけが 500（`AuthConfigurationError`）になる。`/api/meals` など記録の API は、なくても動く
-- 手元では、`npm run dev`（`server/devApi.ts` の `DEV_BETTER_AUTH_SECRET`）と `npm run dev:api`（コマンドの `--binding`）が、起動するときだけ開発専用の値を設定する。`DEV_USER_EMAIL` と同じく、設定ファイルには書かない
-- `RESEND_API_KEY` か `MAIL_FROM` がないときは、メールを送るとき（会員登録、確認のメールの送り直し）だけ 500（`MailConfigurationError`）になる。ほかの API は、なくても動く
+- 本番の値（D1 のデータベース ID、`BETTER_AUTH_SECRET`、`RESEND_API_KEY`、`MAIL_FROM`）は、リポジトリに書かず、Cloudflare 側で設定する（`docs/deploy.md`）
+- `BETTER_AUTH_SECRET` がないときは、ログインの API（`/api/auth/` 以下）と記録の API（`/api/meals` など）が 500（`AuthConfigurationError`）になる。`/api/health` は、なくても動く
+- 手元では、`npm run dev`（`server/devApi.ts` の `DEV_BETTER_AUTH_SECRET`）と `npm run dev:api`（コマンドの `--binding`）が、起動するときだけ開発専用の値を設定する。リポジトリの設定ファイル（`wrangler.dev.jsonc` など）には書かない
+- `RESEND_API_KEY` か `MAIL_FROM` がないときは、メールを送るとき（会員登録、確認のメールの送り直し）だけ 500（`MailConfigurationError`）になる。会員登録ができないので、本番では必須
 - 手元の `npm run dev` は、メールを送らずにためるので、`RESEND_API_KEY` は要らない（`MAIL_FROM` は `server/devApi.ts` の `DEV_MAIL_FROM` を起動するときだけ設定する）
 
 ### D1 の表
 
 表のスキーマは、`migrations/` の下のマイグレーションのファイルで管理します。
 
-- 表 `meals`: 1行が1品。列は記録の項目（`meal_type` のように小文字とアンダースコアの名前）と、メールアドレスの列 `user_email`
-- 主キーは `user_email` + `id`。日ごと・期間の取得用に、`user_email` + `date` の索引がある
+- 表 `member_meals`: 記録。1行が1品（`migrations/0003_create_member_meals.sql`）。列は記録の項目（`meal_type` のように小文字とアンダースコアの名前）と、会員の ID の列 `user_id`（表 `user` の `id` への外部キー。会員が消えると、その会員の記録も消える `ON DELETE CASCADE`）
+  - 主キーは `user_id` + `id`。日ごと・期間の取得用に、`user_id` + `date` の索引がある
+- 表 `meals`: 古い記録の表（Cloudflare Access のメールアドレスの列 `user_email` ごとの記録）。API は使わない。所有者が、書き出しと読み込みで記録を会員の記録へ移したことを確かめた後に、別の Issue で消す
 
 - 表 `user`、`session`、`account`、`verification`、`rateLimit`: 会員のログイン（Better Auth）が使う表（`migrations/0002_create_auth_tables.sql`）。形は、使っている版の Better Auth が期待するものに合わせている。パスワードは、ハッシュにして `account` に入る
 
