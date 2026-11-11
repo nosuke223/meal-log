@@ -327,6 +327,20 @@ test('同じリンクをもう一度使うと、使えない旨を出し、再�
   expect(window.location.hash).toBe('#/forgot')
 })
 
+test('使えないリンクを開いた後、同じタブで別の有効なリンクを開くと、フォームが出て再設定できる', async () => {
+  const authClient = createMemoryAuthClient()
+  const token = await memberWithResetToken(authClient)
+  open('#/reset/broken-token')
+  render(<App today={TODAY} authClient={authClient} />)
+  setNewPassword(NEW_PASSWORD)
+  expect(await screen.findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.resetLinkUnusable)
+
+  window.location.hash = `#/reset/${token}`
+  expect(await screen.findByRole('form', { name: '新しいパスワード' })).toBeInTheDocument()
+  setNewPassword(NEW_PASSWORD)
+  expect(await screen.findByRole('status')).toHaveTextContent('パスワードを変更しました。ログインしてください')
+})
+
 test('期限切れ、正しくないリンクも、区別せず同じ表示になる', async () => {
   const authClient = createMemoryAuthClient()
   const token = await memberWithResetToken(authClient)

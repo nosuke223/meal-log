@@ -167,6 +167,8 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     return (
       <ResetScreen
         {...authScreenProps}
+        // リンクのトークンが変わったら、エラーや入力の状態を初めからにする
+        key={route.token ?? resetToken ?? ''}
         token={route.token ?? resetToken}
         // 変更できたら、ログインの画面に移る（履歴には戻らない。ログインした状態にはならない）
         onReset={() => {
