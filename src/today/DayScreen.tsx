@@ -24,6 +24,7 @@ type Props = {
   autoUpdateError?: string | null
   onOpenCalendar: () => void
   onOpenData: () => void
+  onOpenAccount: () => void
 }
 
 function messageOf(error: unknown): string {
@@ -31,7 +32,16 @@ function messageOf(error: unknown): string {
 }
 
 /** 1日分の記録の画面。追加・変更・削除ができる */
-export function DayScreen({ repository, date, today, revision, autoUpdateError, onOpenCalendar, onOpenData }: Props) {
+export function DayScreen({
+  repository,
+  date,
+  today,
+  revision,
+  autoUpdateError,
+  onOpenCalendar,
+  onOpenData,
+  onOpenAccount,
+}: Props) {
   // records は loaded.date の日の一覧（日を移った直後の失敗で、前の日の記録を残さないために日も持つ）
   const [loaded, setLoaded] = useState<{ date: string | null; records: MealRecord[] }>({ date: null, records: [] })
   const records = loaded.records
@@ -106,6 +116,9 @@ export function DayScreen({ repository, date, today, revision, autoUpdateError, 
           </button>
           <button type="button" onClick={onOpenData}>
             データ
+          </button>
+          <button type="button" onClick={onOpenAccount}>
+            アカウント
           </button>
         </div>
       </header>

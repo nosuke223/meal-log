@@ -1,5 +1,14 @@
 import { expect, test } from 'vitest'
-import { calendarDateHash, calendarHash, dataHash, parseHash, todayHash } from './route'
+import {
+  accountHash,
+  calendarDateHash,
+  calendarHash,
+  dataHash,
+  loginHash,
+  parseHash,
+  signupHash,
+  todayHash,
+} from './route'
 
 const TODAY = '2026-11-06'
 
@@ -56,4 +65,13 @@ test('カレンダーの月や日付がない・不正なときは、今月に�
 test('データのハッシュは、データの画面にする', () => {
   expect(dataHash()).toBe('#/data')
   expect(parseHash(dataHash(), TODAY)).toEqual({ screen: 'data' })
+})
+
+test('ログイン、会員登録、アカウントのハッシュは、それぞれの画面にする', () => {
+  expect(loginHash()).toBe('#/login')
+  expect(signupHash()).toBe('#/signup')
+  expect(accountHash()).toBe('#/account')
+  expect(parseHash(loginHash(), TODAY)).toEqual({ screen: 'login' })
+  expect(parseHash(signupHash(), TODAY)).toEqual({ screen: 'signup' })
+  expect(parseHash(accountHash(), TODAY)).toEqual({ screen: 'account' })
 })

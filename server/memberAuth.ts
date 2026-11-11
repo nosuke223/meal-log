@@ -2,6 +2,7 @@
 // Access の確かめより前に動く。記録の読み書き（/api/meals など）は、まだ Access のログインで動く
 
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
+import { AUTH_MESSAGES, MIN_PASSWORD_LENGTH } from '../src/auth/authClient'
 import { AuthConfigurationError } from './auth'
 import type { D1Database } from './d1'
 
@@ -12,9 +13,6 @@ export type MemberAuthEnv = {
   /** セッションなどの署名に使う秘密の値。リポジトリには書かない（本番とプレビューは Cloudflare 側で、手元は起動するときだけ設定する） */
   BETTER_AUTH_SECRET?: string
 }
-
-/** パスワードの最短の文字数 */
-export const MIN_PASSWORD_LENGTH = 8
 
 /**
  * 試す回数の上限（総当たりを防ぐ）。IP アドレスとアドレスの組み合わせごとに数え、window 秒の間に max 回まで。
@@ -30,7 +28,7 @@ export const AUTH_RATE_LIMITS = {
 const DEFAULT_RATE_LIMIT = { window: 60, max: 100 }
 
 /** 試す回数の上限を超えたときの説明 */
-export const TOO_MANY_REQUESTS_MESSAGE = '試す回数の上限を超えました。しばらく待ってから、もう一度試してください'
+export const TOO_MANY_REQUESTS_MESSAGE = AUTH_MESSAGES.tooManyRequests
 
 /** /api/auth/ 以下のアドレスか */
 export function isAuthPath(pathname: string): boolean {

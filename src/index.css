@@ -537,6 +537,41 @@ button.danger {
   overflow-wrap: anywhere;
 }
 
+/* ログインと会員登録のフォーム */
+.credentials-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.credentials-form .error {
+  margin: 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field .text-input {
+  flex: none;
+}
+
+.field-label {
+  font-size: 0.9rem;
+}
+
+.field-hint {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.account-email {
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+
 /* 画面には見せず、読み上げやファイルの選択には使う */
 .visually-hidden {
   position: absolute;

@@ -1,15 +1,32 @@
 import { useEffect, useState } from 'react'
+import { AccountScreen } from './auth/AccountScreen'
+import type { AuthClient } from './auth/authClient'
+import { createDefaultAuthClient } from './auth/defaultAuthClient'
+import { LoginScreen } from './auth/LoginScreen'
+import { SignupScreen } from './auth/SignupScreen'
 import { CalendarScreen } from './calendar/CalendarScreen'
 import { createDefaultMealRepository } from './meals/defaultMealRepository'
 import type { MealRepository } from './meals/mealRepository'
 import { DataScreen } from './data/DataScreen'
-import { calendarDateHash, calendarHash, dataHash, dayHash, parseHash, todayHash } from './route'
+import {
+  accountHash,
+  calendarDateHash,
+  calendarHash,
+  dataHash,
+  dayHash,
+  loginHash,
+  parseHash,
+  signupHash,
+  todayHash,
+} from './route'
 import { DayScreen } from './today/DayScreen'
 import { useToday } from './useToday'
 
 type Props = {
   /** 保存の窓口。省略するとサーバーの API に保存する */
   repository?: MealRepository
+  /** ログインの窓口。省略するとサーバーのログインの API を使う */
+  authClient?: AuthClient
   /** 今日として扱う日（YYYY-MM-DD）。省略すると端末の現地の今日 */
   today?: string
 }
@@ -18,8 +35,9 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function App({ repository, today: fixedToday }: Props) {
+function App({ repository, authClient: givenAuthClient, today: fixedToday }: Props) {
   const [mealRepository] = useState(() => repository ?? createDefaultMealRepository())
+  const [authClient] = useState(() => givenAuthClient ?? createDefaultAuthClient())
   const today = useToday(fixedToday)
   const [hash, setHash] = useState(() => window.location.hash)
   // 日が過ぎた予定を「食べた」にしたときと、タブや画面に戻ってきたときに上げて、画面に読み直させる
@@ -108,6 +126,23 @@ function App({ repository, today: fixedToday }: Props) {
     return <DataScreen repository={mealRepository} today={today} onBack={() => navigate(todayHash())} />
   }
 
+  // ログインの画面は、ログインしたら今日の記録の画面に移る
+  const authScreenProps = {
+    authClient,
+    onBack: () => navigate(todayHash()),
+  }
+  if (route.screen === 'login') {
+    return <LoginScreen {...authScreenProps} onSignedIn={() => navigate(todayHash())} onOpenSignup={() => navigate(signupHash())} />
+  }
+  if (route.screen === 'signup') {
+    return <SignupScreen {...authScreenProps} onSignedUp={() => navigate(todayHash())} onOpenLogin={() => navigate(loginHash())} />
+  }
+  if (route.screen === 'account') {
+    return (
+      <AccountScreen {...authScreenProps} onSignedIn={() => navigate(todayHash())} onOpenSignup={() => navigate(signupHash())} />
+    )
+  }
+
   if (route.screen === 'calendar') {
     return (
       <CalendarScreen
@@ -139,6 +174,7 @@ function App({ repository, today: fixedToday }: Props) {
       autoUpdateError={autoUpdateError}
       onOpenCalendar={() => navigate(calendarDateHash(date))}
       onOpenData={() => navigate(dataHash())}
+      onOpenAccount={() => navigate(accountHash())}
     />
   )
 }

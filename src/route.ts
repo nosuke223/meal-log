@@ -3,6 +3,9 @@
 //   #/calendar/YYYY-MM-DD その日の月のカレンダー（その日を選んだ状態）
 //   #/calendar/YYYY-MM その月のカレンダー（今月なら今日を選んだ状態、ほかの月は何も選ばない）
 //   #/data             データ（書き出し・読み込み）の画面
+//   #/login            ログインの画面
+//   #/signup           会員登録の画面
+//   #/account          アカウントの画面（ログインしていなければ、ログインの画面）
 //   それ以外（空を含む） 今日の記録の画面
 import { isValidMonth, monthOf } from './calendar/calendarMonth'
 import { isValidDate } from './meals/mealRecord'
@@ -13,6 +16,9 @@ export type Route =
   /** selected は選んだ日（YYYY-MM-DD）。null は何も選んでいない */
   | { screen: 'calendar'; month: string; selected: string | null }
   | { screen: 'data' }
+  | { screen: 'login' }
+  | { screen: 'signup' }
+  | { screen: 'account' }
 
 /**
  * ハッシュを画面に直す。不正な日付は今日の記録の画面にする（明日以降の日は、その日の画面にする）。
@@ -27,8 +33,8 @@ export function parseHash(hash: string, today: string): Route {
     const month = isValidMonth(value) ? value : monthOf(today)
     return { screen: 'calendar', month, selected: month === monthOf(today) ? today : null }
   }
-  if (screen === 'data') {
-    return { screen: 'data' }
+  if (screen === 'data' || screen === 'login' || screen === 'signup' || screen === 'account') {
+    return { screen }
   }
   if (screen === 'day' && isValidDate(value)) {
     return { screen: 'day', date: value }
@@ -56,4 +62,16 @@ export function calendarDateHash(date: string): string {
 
 export function dataHash(): string {
   return '#/data'
+}
+
+export function loginHash(): string {
+  return '#/login'
+}
+
+export function signupHash(): string {
+  return '#/signup'
+}
+
+export function accountHash(): string {
+  return '#/account'
 }
