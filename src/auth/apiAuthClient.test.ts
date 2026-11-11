@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createApiAuthClient } from './apiAuthClient'
-import { AUTH_MESSAGES, AuthError, EmailNotVerifiedError } from './authClient'
+import { AUTH_MESSAGES, AuthError, EmailNotVerifiedError, ResetLinkError } from './authClient'
 
 type Sent = { url: string; init: RequestInit }
 
@@ -57,6 +57,34 @@ describe('ログインの API を呼ぶ窓口', () => {
     expect(sent[0].url).toBe('/api/auth/send-verification-email')
     expect(sent[0].init.method).toBe('POST')
     expect(JSON.parse(sent[0].init.body as string)).toEqual({ email: 'alice@example.com' })
+  })
+
+  it('再設定のメールは POST /api/auth/request-password-reset に、前後の空白を除いたメールアドレスを送る', async () => {
+    const { fetch, sent } = fakeFetch(() => json(200, { status: true, message: 'x' }))
+
+    await expect(createApiAuthClient({ fetch }).requestPasswordReset(' alice@example.com ')).resolves.toBeUndefined()
+    expect(sent[0].url).toBe('/api/auth/request-password-reset')
+    expect(sent[0].init.method).toBe('POST')
+    expect(JSON.parse(sent[0].init.body as string)).toEqual({ email: 'alice@example.com' })
+  })
+
+  it('新しいパスワードは POST /api/auth/reset-password に、トークンを本文に入れて送る（アドレスには入れない）', async () => {
+    const { fetch, sent } = fakeFetch(() => json(200, { status: true }))
+
+    await expect(createApiAuthClient({ fetch }).resetPassword('tok123', 'new-password-1')).resolves.toBeUndefined()
+    expect(sent[0].url).toBe('/api/auth/reset-password')
+    expect(JSON.parse(sent[0].init.body as string)).toEqual({ token: 'tok123', newPassword: 'new-password-1' })
+  })
+
+  it('使えない再設定のリンク（INVALID_TOKEN、USER_NOT_FOUND）は、ResetLinkError にする。短いパスワードは日本語のエラー', async () => {
+    for (const code of ['INVALID_TOKEN', 'USER_NOT_FOUND']) {
+      const { fetch } = fakeFetch(() => json(400, { code, message: 'x' }))
+      const error = await createApiAuthClient({ fetch }).resetPassword('t', 'new-password-1').catch((thrown: unknown) => thrown)
+      expect(error).toBeInstanceOf(ResetLinkError)
+      expect((error as Error).message).toBe(AUTH_MESSAGES.resetLinkUnusable)
+    }
+    const { fetch } = fakeFetch(() => json(400, { code: 'PASSWORD_TOO_SHORT', message: 'x' }))
+    await expect(createApiAuthClient({ fetch }).resetPassword('t', '1234567')).rejects.toThrow(AUTH_MESSAGES.passwordTooShort)
   })
 
   it('メールアドレスの確認が済んでいないときのログインは、EmailNotVerifiedError にする', async () => {

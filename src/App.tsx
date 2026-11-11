@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { AccountScreen } from './auth/AccountScreen'
 import type { AuthClient } from './auth/authClient'
 import { createDefaultAuthClient } from './auth/defaultAuthClient'
+import { ForgotScreen } from './auth/ForgotScreen'
 import { LoginScreen } from './auth/LoginScreen'
+import { ResetScreen } from './auth/ResetScreen'
 import { SignupScreen } from './auth/SignupScreen'
 import { CalendarScreen } from './calendar/CalendarScreen'
 import { createDefaultMealRepository } from './meals/defaultMealRepository'
@@ -14,8 +16,10 @@ import {
   calendarHash,
   dataHash,
   dayHash,
+  forgotHash,
   loginHash,
   parseHash,
+  resetHash,
   signupHash,
   todayHash,
 } from './route'
@@ -40,6 +44,8 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
   const [authClient] = useState(() => givenAuthClient ?? createDefaultAuthClient())
   const today = useToday(fixedToday)
   const [hash, setHash] = useState(() => window.location.hash)
+  // 再設定のメールのリンクのトークン（メモリーにだけ持つ。読み込み直すと消える）
+  const [resetToken, setResetToken] = useState<string | null>(null)
   // 日が過ぎた予定を「食べた」にしたときと、タブや画面に戻ってきたときに上げて、画面に読み直させる
   const [revision, setRevision] = useState(0)
   // 日が過ぎた予定を「食べた」にできなかったときのエラー
@@ -115,7 +121,14 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     setHash(todayHash())
   }
 
-  // 上で今日の記録の画面にしたときに、アドレスも置き換える（履歴は増やさない）
+  // 再設定のメールのリンク（#/reset/<トークン>）を開いたら、トークンを画面の中（メモリー）に持ち、
+  // アドレスを #/reset に置き換える（履歴は増やさない。トークンをアドレスに残さない）
+  if (route.screen === 'reset' && route.token !== null) {
+    setResetToken(route.token)
+    setHash(resetHash())
+  }
+
+  // 上で今日の記録の画面や #/reset にしたときに、アドレスも置き換える（履歴は増やさない）
   useEffect(() => {
     if (hash !== window.location.hash) {
       window.history.replaceState(null, '', hash)
@@ -136,19 +149,42 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
       <LoginScreen
         {...authScreenProps}
         // 確認のメールのリンクの結果が変わったら、入力と表示を初めからにする
-        key={route.verification ?? ''}
-        verification={route.verification}
+        key={route.notice ?? ''}
+        notice={route.notice}
         onSignedIn={() => navigate(todayHash())}
         onOpenSignup={() => navigate(signupHash())}
+        onOpenForgot={() => navigate(forgotHash())}
       />
     )
   }
   if (route.screen === 'signup') {
     return <SignupScreen {...authScreenProps} onOpenLogin={() => navigate(loginHash())} />
   }
+  if (route.screen === 'forgot') {
+    return <ForgotScreen {...authScreenProps} onOpenLogin={() => navigate(loginHash())} />
+  }
+  if (route.screen === 'reset') {
+    return (
+      <ResetScreen
+        {...authScreenProps}
+        token={route.token ?? resetToken}
+        // 変更できたら、ログインの画面に移る（履歴には戻らない。ログインした状態にはならない）
+        onReset={() => {
+          setResetToken(null)
+          navigate(loginHash('password-reset'), true)
+        }}
+        onOpenForgot={() => navigate(forgotHash())}
+      />
+    )
+  }
   if (route.screen === 'account') {
     return (
-      <AccountScreen {...authScreenProps} onSignedIn={() => navigate(todayHash())} onOpenSignup={() => navigate(signupHash())} />
+      <AccountScreen
+        {...authScreenProps}
+        onSignedIn={() => navigate(todayHash())}
+        onOpenSignup={() => navigate(signupHash())}
+        onOpenForgot={() => navigate(forgotHash())}
+      />
     )
   }
 

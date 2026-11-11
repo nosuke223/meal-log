@@ -5,7 +5,7 @@
 import { betterAuth, type BetterAuthOptions } from 'better-auth'
 import { APIError } from 'better-auth/api'
 import { AUTH_MESSAGES, MIN_PASSWORD_LENGTH, type EmailVerificationResult } from '../src/auth/authClient'
-import { loginHash } from '../src/route'
+import { loginHash, resetHash } from '../src/route'
 import type { ApiErrorBody } from './api'
 import { AuthConfigurationError } from './auth'
 import type { D1Database } from './d1'
@@ -20,6 +20,7 @@ import {
 } from './mail/mailer'
 import type { MailTemplate } from './mail/templates/layout'
 import { alreadyRegisteredMail } from './mail/templates/alreadyRegistered'
+import { resetPasswordMail } from './mail/templates/resetPassword'
 import { verifyEmailMail } from './mail/templates/verifyEmail'
 
 /** ログインの API の入口 */
@@ -33,6 +34,9 @@ export type MemberAuthEnv = MailEnv & {
 /** 確認のメールのリンクの有効期限（秒） */
 export const EMAIL_VERIFICATION_EXPIRES_IN = 24 * 60 * 60
 
+/** パスワード再設定のメールのリンクの有効期限（秒） */
+export const RESET_PASSWORD_EXPIRES_IN = 60 * 60
+
 /**
  * 試す回数の上限（総当たりを防ぐ）。IP アドレスとアドレスの組み合わせごとに数え、window 秒の間に max 回まで。
  * 数えた値は D1 の表 rateLimit に保存する（Workers は実行環境が入れ替わるので、メモリーには置かない）
@@ -42,6 +46,8 @@ export const AUTH_RATE_LIMITS = {
   '/sign-in/email': { window: 600, max: 10 },
   '/sign-out': { window: 600, max: 30 },
   '/send-verification-email': { window: 600, max: 10 },
+  '/request-password-reset': { window: 600, max: 10 },
+  '/reset-password': { window: 600, max: 10 },
 } as const
 
 /** 上記以外の /api/auth/ のアドレス（ログイン中かの確かめなど）の上限 */
@@ -54,7 +60,7 @@ export const TOO_MANY_REQUESTS_MESSAGE = AUTH_MESSAGES.tooManyRequests
  * メールを送ることがあるアドレス。上の上限とは別に、宛先のメールアドレスと IP アドレスの組み合わせごとに、
  * 送る回数の上限（server/mail/mailRateLimit.ts）を数える。登録の有無を探られないよう、実際に送るかどうかに関係なく数える
  */
-const MAIL_PATHS = ['/sign-up/email', '/send-verification-email']
+const MAIL_PATHS = ['/sign-up/email', '/send-verification-email', '/request-password-reset']
 
 /**
  * リクエストごとに付ける ID のヘッダー（このファイルの中だけで使う。外から来た同じ名前のヘッダーは消す）。
@@ -80,6 +86,14 @@ export function isAuthPath(pathname: string): boolean {
  */
 export function verifyEmailUrl(origin: string, token: string): string {
   return `${origin}${AUTH_BASE_PATH}/verify-email?token=${encodeURIComponent(token)}`
+}
+
+/**
+ * パスワード再設定のメールのリンク。画面のアドレスはハッシュなので、トークンはハッシュの中に入れる
+ * （クエリにすると、サーバーの記録にトークンが残る）。画面がトークンを読んだら、アドレスから消す
+ */
+export function resetPasswordUrl(origin: string, token: string): string {
+  return `${origin}/${resetHash(token)}`
 }
 
 /**
@@ -123,6 +137,23 @@ export function memberAuthOptions(
       autoSignIn: false,
       async onExistingUserSignUp({ user }, request) {
         await sendMail(user.email, alreadyRegisteredMail({ loginUrl: `${origin}/${loginHash()}` }), request)
+      },
+      // パスワードの再設定。確認が済んでいない会員にも送る（再設定しても、確認が済んだことにはならない）。
+      // 再設定したら、その会員のすべてのセッションを切る
+      resetPasswordTokenExpiresIn: RESET_PASSWORD_EXPIRES_IN,
+      revokeSessionsOnPasswordReset: true,
+      async sendResetPassword({ user, token }) {
+        // 登録されている会員にだけ送るので、送れなかったことを応答に出すと、登録の有無が分かる。
+        // 応答は変えず、記録にだけ残す（message に宛先と秘密の値は入っていない）
+        try {
+          await mailer.send({ to: user.email, ...resetPasswordMail({ url: resetPasswordUrl(origin, token) }) })
+        } catch (error) {
+          if (error instanceof MailConfigurationError || error instanceof MailSendError) {
+            console.error(`[meal-log-mail] パスワード再設定のメールを送れなかった: ${error.name}: ${error.message}`)
+            return
+          }
+          throw error
+        }
       },
     },
     emailVerification: {

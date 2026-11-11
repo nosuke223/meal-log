@@ -5,8 +5,10 @@ import {
   calendarDateHash,
   calendarHash,
   dataHash,
+  forgotHash,
   loginHash,
   parseHash,
+  resetHash,
   signupHash,
   todayHash,
 } from './route'
@@ -72,15 +74,26 @@ test('ログイン、会員登録、アカウントのハッシュは、それ�
   expect(loginHash()).toBe('#/login')
   expect(signupHash()).toBe('#/signup')
   expect(accountHash()).toBe('#/account')
-  expect(parseHash(loginHash(), TODAY)).toEqual({ screen: 'login', verification: null })
+  expect(parseHash(loginHash(), TODAY)).toEqual({ screen: 'login', notice: null })
   expect(parseHash(signupHash(), TODAY)).toEqual({ screen: 'signup' })
   expect(parseHash(accountHash(), TODAY)).toEqual({ screen: 'account' })
 })
 
-test('確認のメールのリンクの結果のハッシュは、結果を付けたログインの画面にする。知らない結果は、ただのログインの画面', () => {
-  for (const result of EMAIL_VERIFICATION_RESULTS) {
+test('確認のメールのリンクの結果と、パスワードを再設定した結果のハッシュは、結果を付けたログインの画面にする。知らない結果は、ただのログインの画面', () => {
+  for (const result of [...EMAIL_VERIFICATION_RESULTS, 'password-reset'] as const) {
     expect(loginHash(result)).toBe(`#/login/${result}`)
-    expect(parseHash(loginHash(result), TODAY)).toEqual({ screen: 'login', verification: result })
+    expect(parseHash(loginHash(result), TODAY)).toEqual({ screen: 'login', notice: result })
   }
-  expect(parseHash('#/login/unknown', TODAY)).toEqual({ screen: 'login', verification: null })
+  expect(parseHash('#/login/unknown', TODAY)).toEqual({ screen: 'login', notice: null })
+})
+
+test('再設定のハッシュ: #/forgot はメールを送る画面、#/reset/<トークン> はトークンを読んだ新しいパスワードの画面、#/reset はトークンなし', () => {
+  expect(forgotHash()).toBe('#/forgot')
+  expect(parseHash(forgotHash(), TODAY)).toEqual({ screen: 'forgot' })
+  expect(resetHash()).toBe('#/reset')
+  expect(parseHash(resetHash(), TODAY)).toEqual({ screen: 'reset', token: null })
+  expect(resetHash('abc123')).toBe('#/reset/abc123')
+  expect(parseHash(resetHash('abc123'), TODAY)).toEqual({ screen: 'reset', token: 'abc123' })
+  expect(parseHash('#/reset/a%2Fb', TODAY)).toEqual({ screen: 'reset', token: 'a/b' })
+  expect(parseHash('#/reset/%E0%A4%A', TODAY)).toEqual({ screen: 'reset', token: null })
 })

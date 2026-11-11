@@ -169,3 +169,78 @@ test('パスワードが違う、存在しないメールアドレス、短い�
   await page.goto('/#/account')
   await expect(page.getByRole('form', { name: 'ログイン' })).toBeVisible()
 })
+
+/** 宛先が email の、count 通目の再設定のメールのリンク */
+async function resetLink(page: Page, email: string, count: number): Promise<string> {
+  await expect.poll(async () => (await mailsTo(page, email)).length).toBe(count)
+  const mail = (await mailsTo(page, email))[count - 1]
+  expect(mail.subject).toBe('【meal-log】パスワードの再設定')
+  const link = /http:\/\/localhost:5173\/#\/reset\/\S+/.exec(mail.text)?.[0]
+  expect(link).toBeDefined()
+  return link as string
+}
+
+test('「パスワードを忘れた」→ 再設定のメールのリンク → 新しいパスワード → ログインまで通る。同じリンクは使えない', async ({ page }) => {
+  const email = memberEmail()
+  const newPassword = 'e2e-new-password-456'
+  await signUp(page, email)
+  await page.goto(await verificationLink(page, email, 1))
+  await expect(page).toHaveURL(/#\/login\/verified$/)
+
+  // ログインの画面の「パスワードを忘れた」から、再設定のメールを送る
+  await page.getByRole('button', { name: 'パスワードを忘れた' }).click()
+  await expect(page).toHaveURL(/#\/forgot$/)
+  const forgotForm = page.getByRole('form', { name: '再設定のメール' })
+  await forgotForm.getByLabel('メールアドレス').fill(email.toUpperCase())
+  await forgotForm.getByRole('button', { name: '再設定のメールを送る' }).click()
+  const requested = '登録されているメールアドレスなら、再設定のメールを送りました。メールのリンクを開いてください'
+  await expect(page.getByRole('status')).toHaveText(requested)
+  const link = await resetLink(page, email, 2)
+
+  // 登録されていないメールアドレスでも、同じ表示で、メールは届かない
+  const stranger = memberEmail()
+  await page.goto('/#/forgot')
+  await page.getByRole('form', { name: '再設定のメール' }).getByLabel('メールアドレス').fill(stranger)
+  await page.getByRole('form', { name: '再設定のメール' }).getByRole('button', { name: '再設定のメールを送る' }).click()
+  await expect(page.getByRole('status')).toHaveText(requested)
+  expect(await mailsTo(page, stranger)).toEqual([])
+
+  // リンクを開くと、アドレスからトークンが消える。8文字未満のパスワードは断られる
+  await page.goto(link)
+  const resetForm = page.getByRole('form', { name: '新しいパスワード' })
+  await expect(resetForm).toBeVisible()
+  await expect(page).toHaveURL(/#\/reset$/)
+  await resetForm.getByLabel('新しいパスワード').fill('1234567')
+  await resetForm.getByRole('button', { name: 'パスワードを変更する' }).click()
+  await expect(resetForm.getByRole('alert')).toHaveText('パスワードは8文字以上にしてください')
+
+  // 新しいパスワードを決めると、ログインの画面に移る（ログインした状態にはならない）
+  await resetForm.getByLabel('新しいパスワード').fill(newPassword)
+  await resetForm.getByRole('button', { name: 'パスワードを変更する' }).click()
+  await expect(page).toHaveURL(/#\/login\/password-reset$/)
+  await expect(page.getByRole('status')).toHaveText('パスワードを変更しました。ログインしてください')
+  expect((await page.context().cookies()).find((cookie) => cookie.name.endsWith('session_token'))).toBeUndefined()
+
+  // 古いパスワードでは入れず、新しいパスワードでログインできる
+  const loginForm = page.getByRole('form', { name: 'ログイン' })
+  await signIn(page, email, PASSWORD)
+  await expect(loginForm.getByRole('alert')).toHaveText('メールアドレスかパスワードが違います')
+  await signIn(page, email, newPassword)
+  await expectTodayScreen(page)
+
+  // 読み込み直してトークンがなくなったときは、リンクをもう一度開くよう出す
+  await page.goto(link)
+  await expect(page).toHaveURL(/#\/reset$/)
+  await page.reload()
+  await expect(page.getByRole('alert')).toHaveText('リンクをもう一度開いてください')
+
+  // 同じリンクをもう一度使っても、使えない。再設定のメールを送る画面に移れる
+  await page.goto(link)
+  await page.getByRole('form', { name: '新しいパスワード' }).getByLabel('新しいパスワード').fill('another-password-789')
+  await page.getByRole('button', { name: 'パスワードを変更する' }).click()
+  await expect(page.getByRole('alert')).toHaveText(
+    'このリンクは、期限が切れているか、すでに使われています。もう一度、再設定のメールを送ってください',
+  )
+  await page.getByRole('button', { name: '再設定のメールを送る' }).click()
+  await expect(page).toHaveURL(/#\/forgot$/)
+})

@@ -7,6 +7,7 @@ type Props = {
   /** ログインしていなくて出したログインの画面で、ログインできたとき */
   onSignedIn: () => void
   onOpenSignup: () => void
+  onOpenForgot: () => void
   onBack: () => void
 }
 
@@ -22,7 +23,7 @@ function messageOf(error: unknown): string {
 }
 
 /** アカウントの画面。ログイン中のメールアドレスと「ログアウト」を出す。ログインしていなければ、ログインの画面を出す */
-export function AccountScreen({ authClient, onSignedIn, onOpenSignup, onBack }: Props) {
+export function AccountScreen({ authClient, onSignedIn, onOpenSignup, onOpenForgot, onBack }: Props) {
   const [state, setState] = useState<State>({ kind: 'loading' })
   const [signOutError, setSignOutError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -56,7 +57,15 @@ export function AccountScreen({ authClient, onSignedIn, onOpenSignup, onBack }: 
   }
 
   if (state.kind === 'signedOut') {
-    return <LoginScreen authClient={authClient} onSignedIn={onSignedIn} onOpenSignup={onOpenSignup} onBack={onBack} />
+    return (
+      <LoginScreen
+        authClient={authClient}
+        onSignedIn={onSignedIn}
+        onOpenSignup={onOpenSignup}
+        onOpenForgot={onOpenForgot}
+        onBack={onBack}
+      />
+    )
   }
 
   return (

@@ -1,4 +1,4 @@
-import { AUTH_MESSAGES, AuthError, EmailNotVerifiedError, type AuthClient, type Member } from './authClient'
+import { AUTH_MESSAGES, AuthError, EmailNotVerifiedError, ResetLinkError, type AuthClient, type Member } from './authClient'
 
 export type ApiAuthClientOptions = {
   /** API を呼ぶのに使う。テストで差し替える */
@@ -68,6 +68,15 @@ export function createApiAuthClient(options: ApiAuthClientOptions = {}): AuthCli
     async sendVerificationEmail(email) {
       await call('POST', '/send-verification-email', { email: email.trim() })
     },
+
+    async requestPasswordReset(email) {
+      await call('POST', '/request-password-reset', { email: email.trim() })
+    },
+
+    async resetPassword(token, newPassword) {
+      // トークンは本文に入れる（アドレスのクエリに入れると、サーバーの記録に残る）
+      await call('POST', '/reset-password', { token, newPassword })
+    },
   }
 }
 
@@ -95,6 +104,8 @@ function errorOf(status: number, data: unknown): AuthError {
   const body = typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {}
   const code = typeof body.code === 'string' ? body.code : null
   if (code === 'EMAIL_NOT_VERIFIED') return new EmailNotVerifiedError()
+  // 再設定のリンクの、期限切れ、使用済み、正しくないトークンは、区別しない
+  if (code === 'INVALID_TOKEN' || code === 'USER_NOT_FOUND') return new ResetLinkError()
   if (code !== null && code in MESSAGES_BY_CODE) return new AuthError(MESSAGES_BY_CODE[code])
   if (status === 429) return new AuthError(AUTH_MESSAGES.tooManyRequests)
   if (status === 403) return new AuthError(AUTH_MESSAGES.forbidden)

@@ -1,19 +1,21 @@
-import { AUTH_MESSAGES, type AuthClient, type EmailVerificationResult } from './authClient'
+import { AUTH_MESSAGES, type AuthClient, type LoginNotice } from './authClient'
 import { CredentialsForm } from './CredentialsForm'
 import { ResendVerificationForm } from './ResendVerification'
 
 type Props = {
   authClient: AuthClient
-  /** 確認のメールのリンクを開いた結果。なければ null */
-  verification?: EmailVerificationResult | null
+  /** 確認のメールのリンクを開いた結果か、パスワードを再設定した結果。なければ null */
+  notice?: LoginNotice | null
   /** ログインできたとき */
   onSignedIn: () => void
   onOpenSignup: () => void
+  onOpenForgot: () => void
   onBack: () => void
 }
 
-/** 確認のメールのリンクを開いた結果の説明と、送り直しのフォームを出すか */
-const VERIFICATION_NOTICES: Record<EmailVerificationResult, { message: string; failed: boolean; resend: boolean }> = {
+/** 結果の説明と、確認のメールの送り直しのフォームを出すか */
+const NOTICES: Record<LoginNotice, { message: string; failed: boolean; resend: boolean }> = {
+  'password-reset': { message: AUTH_MESSAGES.passwordReset, failed: false, resend: false },
   verified: { message: AUTH_MESSAGES.emailVerified, failed: false, resend: false },
   'link-used': { message: AUTH_MESSAGES.linkUsed, failed: true, resend: true },
   'link-expired': { message: AUTH_MESSAGES.linkExpired, failed: true, resend: true },
@@ -22,8 +24,8 @@ const VERIFICATION_NOTICES: Record<EmailVerificationResult, { message: string; f
 }
 
 /** ログインの画面 */
-export function LoginScreen({ authClient, verification = null, onSignedIn, onOpenSignup, onBack }: Props) {
-  const notice = verification === null ? null : VERIFICATION_NOTICES[verification]
+export function LoginScreen({ authClient, notice: result = null, onSignedIn, onOpenSignup, onOpenForgot, onBack }: Props) {
+  const notice = result === null ? null : NOTICES[result]
   return (
     <main className="screen">
       <header className="screen-header">
@@ -33,7 +35,7 @@ export function LoginScreen({ authClient, verification = null, onSignedIn, onOpe
         </button>
       </header>
       {notice && (
-        <section className="section" aria-label="メールアドレスの確認">
+        <section className="section" aria-label="お知らせ">
           <p role={notice.failed ? 'alert' : 'status'} className={notice.failed ? 'error' : 'description'}>
             {notice.message}
           </p>
@@ -51,6 +53,11 @@ export function LoginScreen({ authClient, verification = null, onSignedIn, onOpe
             onSignedIn()
           }}
         />
+      </section>
+      <section className="section">
+        <button type="button" onClick={onOpenForgot}>
+          パスワードを忘れた
+        </button>
       </section>
       <section className="section">
         <p className="description">はじめて使うときは、会員登録をしてください。</p>
