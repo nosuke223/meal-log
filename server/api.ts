@@ -5,9 +5,10 @@ import { MealNotFoundError, MealStorageError, type MealRepository } from '../src
 import { AuthConfigurationError, createAuthenticator, type AuthEnv } from './auth'
 import type { D1Database } from './d1'
 import { createD1MealRepository } from './d1MealRepository'
+import { createMemberAuthHandler, isAuthPath, type MemberAuthEnv } from './memberAuth'
 import { applyMigrations, appliedMigrationNames, type Migration } from './migrate'
 
-export type ApiEnv = AuthEnv & {
+export type ApiEnv = AuthEnv & MemberAuthEnv & {
   /** つながっていない環境（Pages の設定で D1 をつないでいないとき）では無い */
   DB?: D1Database
 }
@@ -72,6 +73,7 @@ type RouteContext = {
 /** API のリクエストを処理する関数を作る */
 export function createApiHandler(options: ApiOptions = {}) {
   const authenticate = createAuthenticator({ fetch: options.fetch, now: options.now })
+  const handleMemberAuth = createMemberAuthHandler()
   const migrations = options.migrations
   // マイグレーションを当て終えたか（当てている途中なら、その処理）。この実行環境で最初のリクエストのときだけ当て、
   // 失敗したら覚えず、次のリクエストでやり直す
@@ -97,6 +99,15 @@ export function createApiHandler(options: ApiOptions = {}) {
 
       const url = new URL(request.url)
       if (routeName(url.pathname) === 'health') return await handleHealth(request, db)
+      // 会員の登録とログイン。Access を外した公開の後も動くよう、Access の確かめより前に処理する
+      if (isAuthPath(url.pathname)) {
+        try {
+          return await handleMemberAuth(request, env, db)
+        } catch (error) {
+          if (error instanceof AuthConfigurationError) throw new HttpError(500, 'AuthConfigurationError', error.message)
+          throw error
+        }
+      }
 
       let email: string | null
       try {

@@ -9,7 +9,7 @@ const CONFIG_PATH = fileURLToPath(new URL('../wrangler.dev.jsonc', import.meta.u
 
 export type TestDatabase = {
   db: D1Database
-  /** 記録をすべて消す（テストごとに呼ぶ） */
+  /** 記録と会員をすべて消す（テストごとに呼ぶ） */
   reset(): Promise<void>
   dispose(): Promise<void>
 }
@@ -32,16 +32,21 @@ export async function startTestDatabase(options: TestDatabaseOptions = {}): Prom
   return {
     db,
     async reset() {
-      await db.prepare('DELETE FROM meals').run()
+      // 会員の表は、会員（user）を参照する表から消す
+      for (const table of ['meals', 'session', 'account', 'verification', 'rateLimit', 'user']) {
+        await db.prepare(`DELETE FROM "${table}"`).run()
+      }
     },
     dispose: () => proxy.dispose(),
   }
 }
 
-/** 表をすべて消し、空の D1 に戻す（D1 が中で使う表は残す） */
+/** 表をすべて消し、空の D1 に戻す（D1 が中で使う表は残す）。ほかの表から参照される表は後に消すよう、作った順の逆に消す */
 export async function dropAllTables(db: D1Database): Promise<void> {
   const { results } = await db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY rowid DESC",
+    )
     .all<{ name: string }>()
   for (const { name } of results) {
     await db.prepare(`DROP TABLE "${name}"`).run()

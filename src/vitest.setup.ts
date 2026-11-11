@@ -9,6 +9,12 @@ vi.mock('./meals/defaultMealRepository', async () => {
   return { createDefaultMealRepository: () => createLocalStorageMealRepository() }
 })
 
+// ログインの窓口も、サーバーのログインの API ではなく、メモリーの中だけで動く窓口に差し替える
+vi.mock('./auth/defaultAuthClient', async () => {
+  const { createMemoryAuthClient } = await import('./auth/memoryAuthClient')
+  return { createDefaultAuthClient: () => createMemoryAuthClient() }
+})
+
 afterEach(() => {
   cleanup()
   window.localStorage.clear()

@@ -48,6 +48,12 @@ export class MealApi {
   }
 }
 
+/** テスト用の IP アドレス（198.18.0.0/15 は、試験用に取ってある範囲） */
+function randomTestIp(): string {
+  const byte = () => Math.floor(Math.random() * 256)
+  return `198.${18 + Math.floor(Math.random() * 2)}.${byte()}.${byte()}`
+}
+
 type Fixtures = {
   /** テストの人のメールアドレス。テストごとに別の人にして、記録が混ざらないようにする */
   userEmail: string
@@ -66,7 +72,9 @@ export const test = base.extend<Fixtures>({
     await provide(`e2e-${randomUUID()}@example.com`)
   },
   extraHTTPHeaders: async ({ userEmail }, provide) => {
-    await provide({ [DEV_USER_HEADER]: userEmail })
+    // 会員のログインの試す回数の上限は、IP アドレスごとに数える。テストごとに別の IP アドレスにして、混ざらないようにする
+    // （開発サーバーは、このヘッダーがあればそのまま使う。server/devApi.ts）
+    await provide({ [DEV_USER_HEADER]: userEmail, 'CF-Connecting-IP': randomTestIp() })
   },
   api: async ({ playwright, baseURL, userEmail }, provide) => {
     const request = await playwright.request.newContext({
