@@ -6,7 +6,8 @@ import { expect, test } from './fixtures'
 // 会員登録からログアウトまで。開発サーバーの API（手元の D1）のログインの API を使う。
 // メールは実際には送らず、開発サーバーにためたもの（DEV_MAILS_PATH）を読んで、リンクを開く
 
-test.use({ viewport: { width: 375, height: 667 } })
+// 会員登録とログインそのものを試すので、ログインしていない状態から始める
+test.use({ viewport: { width: 375, height: 667 }, signedIn: false })
 
 const PASSWORD = 'e2e-password-123'
 const SENT_MESSAGE = '確認のメールを送りました。メールのリンクを開いてください'
