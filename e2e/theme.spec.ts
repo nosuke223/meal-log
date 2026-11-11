@@ -63,8 +63,10 @@ test.beforeEach(async ({ page, api }) => {
   await api.seed(RECORDS)
 })
 
-test('端末がライトモードでも、記録の画面、カレンダー、データ画面は黒に近い背景に白に近い文字になる', async ({ page }) => {
-  for (const hash of ['#/', '#/day/2026-11-17', '#/calendar/2026-11-17', '#/data']) {
+test('端末がライトモードでも、記録の画面、カレンダー、データ画面、ログイン、会員登録、アカウントの画面は黒に近い背景に白に近い文字になる', async ({
+  page,
+}) => {
+  for (const hash of ['#/', '#/day/2026-11-17', '#/calendar/2026-11-17', '#/data', '#/login', '#/signup', '#/account']) {
     await page.goto(`/${hash}`)
     await expect(page.getByRole('heading', { level: 1 })).toBeVisible()
     await expectDarkPage(page)
@@ -114,6 +116,17 @@ test('日付の入力と区分の選択は、暗い見た目で表示される',
   await section(page, '夜').getByRole('button', { name: /ごはん/ }).click()
   const form = section(page, '夜')
   for (const control of [form.getByRole('combobox', { name: '区分' }), form.getByLabel('日付')]) {
+    await expect(control).toBeVisible()
+    expect(await style(control, 'colorScheme')).toBe('dark')
+    expect(luminance(parseRgb(await style(control, 'backgroundColor')))).toBeLessThan(0.05)
+    expect(luminance(parseRgb(await style(control, 'color')))).toBeGreaterThan(0.7)
+  }
+})
+
+test('ログインの画面のメールアドレスとパスワードの入力欄は、暗い見た目で表示される', async ({ page }) => {
+  await page.goto('/#/login')
+  const form = page.getByRole('form', { name: 'ログイン' })
+  for (const control of [form.getByLabel('メールアドレス'), form.getByLabel('パスワード')]) {
     await expect(control).toBeVisible()
     expect(await style(control, 'colorScheme')).toBe('dark')
     expect(luminance(parseRgb(await style(control, 'backgroundColor')))).toBeLessThan(0.05)
