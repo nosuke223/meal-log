@@ -135,7 +135,9 @@ test('通信に失敗したとき、エラーが表示され、記録は消え�
   await addItem(page, '朝', 'ごはん')
   const saved = await api.records()
 
-  await page.route('**/api/**', (route) => route.abort('internetdisconnected'))
+  // 記録の API への通信を失敗させる（ログインの API は通す。開き直したときのログインの確かめは、下で別に試す）
+  const recordApi = (url: URL) => url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/auth/')
+  await page.route(recordApi, (route) => route.abort('internetdisconnected'))
   const morning = section(page, '朝')
   await morning.getByRole('textbox', { name: '新しい品名' }).fill('パン')
   await morning.getByRole('button', { name: '追加', exact: true }).click()
@@ -147,6 +149,14 @@ test('通信に失敗したとき、エラーが表示され、記録は消え�
 
   await page.reload()
   await expect(page.getByRole('alert').filter({ hasText: '記録を読み込めませんでした' })).toContainText(
+    'サーバーに接続できませんでした',
+  )
+  await page.unroute(recordApi)
+
+  // ログインの API にもつながらないときは、開き直すと、ログインの状態を確かめられなかったことが出る
+  await page.route('**/api/**', (route) => route.abort('internetdisconnected'))
+  await page.reload()
+  await expect(page.getByRole('alert').filter({ hasText: 'ログインの状態を確かめられませんでした' })).toContainText(
     'サーバーに接続できませんでした',
   )
 
