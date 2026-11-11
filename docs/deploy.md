@@ -23,6 +23,7 @@
 | `ACCESS_TEAM_NAME` | Access のチーム名 | 手順5 |
 | `ACCESS_AUD` | Access のアプリケーションの AUD タグ | 手順5 |
 | `DEV_USER_EMAIL` | 手元の開発専用。**本番には設定しない** | 設定しない（手順6） |
+| `BETTER_AUTH_SECRET` | 会員のログイン（Better Auth）の秘密の値。本番とプレビューで別の値 | 手順9（本番は公開の直前でよい） |
 
 ## 事前の準備
 
@@ -241,6 +242,48 @@ curl -i 'https://<ハッシュ>.<サブドメイン>.pages.dev/api/meals'
 同じファイルを2回読み込んでも、記録は増えません。
 
 > **注意**: 以前の版の記録は、書き出すまでは、そのブラウザの中にしかありません。以前の版のサイト（アドレス）のデータを消す前に、必ず書き出して、移ったことを確かめてください。
+
+## 9. 会員のログインの秘密の値（`BETTER_AUTH_SECRET`）を入れる
+
+会員の登録とログイン（`/api/auth/`。README の「ログインの API」）は、セッションなどの署名に、秘密の値 `BETTER_AUTH_SECRET` を使います。入っていないときは、`/api/auth/` だけが 500（`AuthConfigurationError`）になります。記録の API（`/api/meals` など）は、入っていなくても今までどおり動きます。
+
+- 値は、推測されにくい長いランダムな文字列にする。本番とプレビューで**別の値**にする（プレビューの値が漏れても、本番のセッションを作れないようにする）
+- 値はリポジトリやメモに平文で残さない。手元の `npm run dev` と `npm run dev:api` が使う開発専用の値（`server/devApi.ts`、`package.json`）は、本番にもプレビューにも使わない
+- 一度入れた値を変えると、それまでのログイン（セッション）は使えなくなる（もう一度ログインすればよい）
+
+値を作る:
+
+```sh
+openssl rand -base64 32
+```
+
+### 9-1. プレビュー
+
+プレビューのデプロイで会員登録とログインを試すために、先に入れます（手順5と同じ要領。値は聞かれたときに貼る）。
+
+```sh
+npx wrangler pages secret put BETTER_AUTH_SECRET --project-name meal-log --env preview
+```
+
+### 9-2. 本番
+
+本番の値は、**公開（Access を外す）の直前**に入れればよいです。入れなくても、今の本番（Access で守った記録の画面と API）は壊れません。
+
+```sh
+npx wrangler pages secret put BETTER_AUTH_SECRET --project-name meal-log
+```
+
+入ったことは `npx wrangler pages secret list --project-name meal-log`（プレビューは `--env preview` を付ける）で確かめます（名前だけが表示されます）。手順5の注意のとおり、次のデプロイから効きます。
+
+### 9-3. 互換性フラグ `nodejs_compat`
+
+Better Auth は、Node.js の `AsyncLocalStorage` を使います。ダッシュボードの「Workers & Pages」→ `meal-log` →「Settings」→「Runtime」の **Compatibility flags** に、`nodejs_compat` を「Production」と「Preview」の両方で入れます（手元は `wrangler.dev.jsonc` と `npm run dev:api` に入っています）。画面の名前や場所は、Cloudflare の更新で変わることがあります（この手順は実機で確かめていません）。
+
+- 入れなくても、ビルドと記録の API は動きます。ログインの API が動かない（500 になる）ときは、このフラグを確かめる
+
+### 9-4. 確かめる
+
+プレビューのデプロイのアドレスで、`#/signup` から会員登録し、「アカウント」の画面でメールアドレスが出ること、ログアウト、ログイン、間違ったパスワードで「メールアドレスかパスワードが違います」と出ることを確かめます。
 
 ## 更新するとき
 

@@ -31,6 +31,18 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 - 画面の色: すべての画面（記録の画面、カレンダー、データ画面）は、端末のライトモード・ダークモードの設定にかかわらず、黒に近い背景に白に近い文字で表示する。文字と背景の明るさの差は 4.5:1 以上にしている
 - 「カレンダー」ボタン: 表示している日の月のカレンダーを、その日を選んだ状態で開く
 - 「データ」ボタン: データ画面（書き出し・読み込み）を開く
+- 「アカウント」ボタン: アカウントの画面を開く（下の「会員登録とログイン」）
+
+## 会員登録とログイン
+
+メールアドレスとパスワードで、会員登録とログイン・ログアウトができます（公開サービスにするための準備。今は、記録の読み書きは会員ごとに分かれず、これまでどおり Access のログインで動きます）。
+
+- アカウントの画面（記録の画面の「アカウント」ボタン）: ログイン中のメールアドレスと「ログアウト」を出す。ログインしていなければ、ログインの画面を出す
+- ログインの画面: メールアドレスとパスワードを入れて「ログイン」。ログインしたら、今日の記録の画面に移る。「会員登録へ」で会員登録の画面に移る
+- 会員登録の画面: メールアドレスとパスワード（8文字以上）を入れて「登録する」。登録すると、そのままログインした状態になり、今日の記録の画面に移る
+- メールアドレスは大文字と小文字を区別しない（小文字にそろえて保存する）。メールの確認はまだ求めない
+- 入力のエラー（パスワードが短い、メールアドレスの形が違う、パスワードが違う、すでに登録されている、試す回数の上限を超えた）は、フォームの上に日本語で出す
+- 画面からログインの API を呼ぶ部分は `src/auth/`（窓口 `AuthClient`）にまとめている。画面のテストでは、メモリーの中だけで動く窓口（`src/auth/memoryAuthClient.ts`）に差し替える
 
 ## 予定と食べた
 
@@ -133,6 +145,9 @@ Cloudflare への公開と Access（所有者だけが開けるようにする�
 | `#/calendar/YYYY-MM-DD` | その日の月のカレンダー（その日を選んだ状態）。実在しない日付のときは、今月のカレンダー（今日を選んだ状態） |
 | `#/calendar/YYYY-MM` | その月のカレンダー（今月なら今日を選び、ほかの月は何も選ばない）。不正な月のときは今月（今日を選んだ状態） |
 | `#/data` | データ画面（書き出し・読み込み） |
+| `#/login` | ログインの画面 |
+| `#/signup` | 会員登録の画面 |
+| `#/account` | アカウントの画面（ログインしていなければ、ログインの画面） |
 
 カレンダーで月を移ったり、日を選んだりしても履歴は増えません（「戻る」は、カレンダーを開く前の画面に戻ります）。「カレンダー」ボタン、「今日」ボタン、「この日の記録を開く」ボタン、選んでいる日のマスのもう一度のタップ、「データ」ボタン、「記録の画面へ」ボタンで画面を移ると履歴が増えます。記録の画面から「戻る」と、その日を選んだカレンダーに戻ります。
 
@@ -301,6 +316,28 @@ curl 'http://localhost:8788/api/meals?date=2026-11-06'
 curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json' -d '{"date":"2026-11-06","mealType":"lunch","name":"うどん","status":"eaten"}'
 ```
 
+### ログインの API（`/api/auth/`）
+
+会員の登録とログインは、Better Auth（`better-auth`）で行います。処理は `server/memberAuth.ts`、入口は `server/api.ts`（`functions/api/[[path]].ts` は呼ぶだけ）。画面は `src/auth/` の窓口を通して使います。
+
+| 操作 | メソッドとアドレス | リクエストの本文 | 成功したときの応答 |
+| --- | --- | --- | --- |
+| 会員登録 | `POST /api/auth/sign-up/email` | `{ "email": "…", "password": "…", "name": "" }` | 200 `{ "user": { "email": "…", … }, … }`。セッションの cookie を出す（そのままログインした状態） |
+| ログイン | `POST /api/auth/sign-in/email` | `{ "email": "…", "password": "…" }` | 200 `{ "user": { "email": "…", … }, … }`。セッションの cookie を出す |
+| ログアウト | `POST /api/auth/sign-out` | `{}` | 200。セッションを D1 から消し、cookie を消す |
+| ログイン中の会員 | `GET /api/auth/get-session` | なし | 200 `{ "user": …, "session": … }`。ログインしていなければ `null` |
+
+- マイグレーションを当てた後、Access の JWT の確かめより前に処理する（`/api/health` と同じ位置）。Access を外した公開の後も動くようにするため。Access の JWT がなくても動く
+- 認証の初期化は `/api/auth/` に来たときだけ行う。`BETTER_AUTH_SECRET` がないときは 500（`AuthConfigurationError`）。ほかの API には影響しない
+- ログインの cookie だけでは、記録の API（`/api/meals` など）は使えない（記録は、まだ Access のログインで読み書きする）
+- パスワードは8文字以上。メールアドレスは小文字にそろえる。メールの確認は求めない
+- 基準のアドレス（オリジン）は、リクエストのアドレスから決める（プレビューは公開ごとにアドレスが変わるため）。ほかのオリジンからのリクエスト（`Origin` がない cookie 付きのリクエストも）は 403
+- セッションの cookie には `HttpOnly`、`SameSite=Lax` を付け、`https` のときは `Secure` も付ける（手元の `http` では付けない）
+- 試す回数の上限（総当たりを防ぐ）: IP アドレス（`CF-Connecting-IP`）ごとに、登録とログインは10分に10回、ログアウトは10分に30回、ほかは1分に100回まで（`server/memberAuth.ts` の `AUTH_RATE_LIMITS`）。超えると 429 `{ "code": "TOO_MANY_REQUESTS", "message": "試す回数の上限を超えました。…" }`（`Retry-After` に待つ秒数）。数えた値は D1 の表 `rateLimit` に保存する
+- エラーの応答は Better Auth の形（`{ "code": "…", "message": "…" }`）。例: パスワードが違う・存在しないメールアドレスは 401 `INVALID_EMAIL_OR_PASSWORD`、登録済みは 422、パスワードが短い・メールアドレスの形が違うは 400。画面は `code` から日本語の説明を出す（`src/auth/apiAuthClient.ts`）
+- 応答には `Cache-Control: no-store` を付ける
+- Better Auth は Node.js の `AsyncLocalStorage` を使うので、Pages の互換性フラグ `nodejs_compat` が要る（手元は `wrangler.dev.jsonc` と `npm run dev:api`。本番とプレビューは `docs/deploy.md`）
+
 ### エラー
 
 エラーの応答の本文は `{ "error": { "type": "…", "message": "…" } }` の形です。`type` でエラーの種類を見分けます（`message` は日本語の説明）。
@@ -336,10 +373,13 @@ Cloudflare Access が付けるヘッダー `Cf-Access-Jwt-Assertion` の JWT を
 | `ACCESS_TEAM_NAME` | Access のチーム名（`<チーム名>.cloudflareaccess.com` の `<チーム名>`。英数字とハイフン） | 設定する |
 | `ACCESS_AUD` | Access のアプリケーションの AUD タグ | 設定する |
 | `DEV_USER_EMAIL` | 手元の開発とテスト専用。設定すると JWT を検証せず、このメールアドレスの人として扱う | **本番に設定しない** |
+| `BETTER_AUTH_SECRET` | 会員のログイン（Better Auth）が、セッションなどの署名に使う秘密の値（推測されにくい長いランダムな文字列） | 設定する（秘密の値として。本番とプレビューで別の値） |
 
 - `DEV_USER_EMAIL` が設定されていない（空も含む）ときは、必ず JWT を検証する。本番に設定すると、誰でもその人として記録を読み書きできてしまうので、絶対に設定しない
 - 手元では、`npm run dev`（`server/devApi.ts`）と `npm run dev:api`（コマンドの `--binding`）が、起動するときだけ設定する。リポジトリの設定ファイル（`wrangler.dev.jsonc` など）には書かない
-- 本番の値（D1 のデータベース ID、チーム名、AUD タグ）は、リポジトリに書かず、Cloudflare 側で設定する
+- 本番の値（D1 のデータベース ID、チーム名、AUD タグ、`BETTER_AUTH_SECRET`）は、リポジトリに書かず、Cloudflare 側で設定する（`docs/deploy.md`）
+- `BETTER_AUTH_SECRET` がないときは、`/api/auth/` 以下だけが 500（`AuthConfigurationError`）になる。`/api/meals` など記録の API は、なくても動く
+- 手元では、`npm run dev`（`server/devApi.ts` の `DEV_BETTER_AUTH_SECRET`）と `npm run dev:api`（コマンドの `--binding`）が、起動するときだけ開発専用の値を設定する。`DEV_USER_EMAIL` と同じく、設定ファイルには書かない
 
 ### D1 の表
 
@@ -347,6 +387,8 @@ Cloudflare Access が付けるヘッダー `Cf-Access-Jwt-Assertion` の JWT を
 
 - 表 `meals`: 1行が1品。列は記録の項目（`meal_type` のように小文字とアンダースコアの名前）と、メールアドレスの列 `user_email`
 - 主キーは `user_email` + `id`。日ごと・期間の取得用に、`user_email` + `date` の索引がある
+
+- 表 `user`、`session`、`account`、`verification`、`rateLimit`: 会員のログイン（Better Auth）が使う表（`migrations/0002_create_auth_tables.sql`）。形は、使っている版の Better Auth が期待するものに合わせている。パスワードは、ハッシュにして `account` に入る
 
 #### マイグレーションは、アプリが自分で当てる
 
