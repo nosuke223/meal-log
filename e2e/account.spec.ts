@@ -159,6 +159,8 @@ test('パスワードが違う、存在しないメールアドレス、短い�
     '【meal-log】このメールアドレスはすでに登録されています',
   ])
 
+  // 送った後の画面にはフォームがなく、同じアドレス（#/signup）へは移れないので、読み込み直して空のフォームを出す
+  await page.reload()
   await signUp(page, memberEmail(), '1234567')
   await expect(page.getByRole('form', { name: '会員登録' }).getByRole('alert')).toHaveText('パスワードは8文字以上にしてください')
   await expect(page).toHaveURL(/#\/signup$/)
