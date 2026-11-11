@@ -199,7 +199,9 @@ test('「パスワードを忘れた」→ 再設定のメールのリンク →
 
   // 登録されていないメールアドレスでも、同じ表示で、メールは届かない
   const stranger = memberEmail()
+  // 同じアドレスへの goto は画面を作り直さない（送信済みの表示が残る）ので、読み込み直して空のフォームにする
   await page.goto('/#/forgot')
+  await page.reload()
   await page.getByRole('form', { name: '再設定のメール' }).getByLabel('メールアドレス').fill(stranger)
   await page.getByRole('form', { name: '再設定のメール' }).getByRole('button', { name: '再設定のメールを送る' }).click()
   await expect(page.getByRole('status')).toHaveText(requested)
