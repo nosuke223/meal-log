@@ -130,11 +130,30 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
           if (reload) setRevision((value) => value + 1)
         })
     }
+    // タブや画面に戻ってきたときは、まずログイン中の会員を確かめ直す（別のタブでログアウトしたり、別の会員でログインしたりしているかもしれない）。
+    // 会員が変わっていたら、前の会員の画面の状態（取り込む前の確認なども）を残さないよう、その会員の画面にする（ログアウトしていたら、ログインの画面に移る）。
+    // 確かめられなかったときは、今までどおり読み直す（ログインが切れていれば、読み直しの 401 でログインの画面に移る）
+    function onReturn() {
+      authClient.getSession().then(
+        (member) => {
+          if (cancelled) return
+          if (member?.email === memberKey) {
+            completePastPlans(true)
+            return
+          }
+          setSession(member === null ? { kind: 'signedOut', expired: true } : { kind: 'signedIn', member })
+          setAutoUpdateError(null)
+        },
+        () => {
+          if (!cancelled) completePastPlans(true)
+        },
+      )
+    }
     function onVisibilityChange() {
-      if (document.visibilityState === 'visible') completePastPlans(true)
+      if (document.visibilityState === 'visible') onReturn()
     }
     function onFocus() {
-      completePastPlans(true)
+      onReturn()
     }
     completePastPlans(false)
     document.addEventListener('visibilitychange', onVisibilityChange)
@@ -144,7 +163,7 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('focus', onFocus)
     }
-  }, [mealRepository, today, memberKey])
+  }, [mealRepository, authClient, today, memberKey])
 
   // ブラウザの「戻る」「進む」や、アドレスの書き換えに合わせる
   useEffect(() => {

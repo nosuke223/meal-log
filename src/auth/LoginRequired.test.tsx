@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, test } from 'vitest'
 import App from '../App'
 import { LOGIN_EXPIRED_MESSAGE } from '../meals/apiMealRepository'
@@ -211,6 +211,78 @@ describe('使っている途中でログインが切れたとき', () => {
     expect(await screen.findByRole('form', { name: 'ログイン' })).toBeInTheDocument()
     expect(window.location.hash).toBe('#/login')
     expect(screen.queryByText(AUTH_MESSAGES.sessionExpired)).not.toBeInTheDocument()
+  })
+})
+
+describe('別のタブでログインの状態が変わったとき', () => {
+  /** 取り込むファイル（1件の記録） */
+  function importFile() {
+    const record = {
+      id: 'x',
+      date: TODAY,
+      mealType: 'lunch',
+      name: 'アリスのために選んだうどん',
+      genre: 'other',
+      dishType: 'main',
+      status: 'eaten',
+      createdAt: '2026-11-01T00:00:00.000Z',
+      updatedAt: '2026-11-01T00:00:00.000Z',
+    }
+    return new File([JSON.stringify({ version: 1, records: [record] })], 'meal-log-2026-11-06.json', {
+      type: 'application/json',
+    })
+  }
+
+  test('別の会員に変わっていたら、タブに戻ったときに、取り込む前の確認を残さず、その会員の画面にする', async () => {
+    const server = createServer('alice@example.com')
+    await server.memoryAuthClient.signUp('bob@example.com', MEMORY_MEMBER_PASSWORD)
+    server.memoryAuthClient.verify('bob@example.com')
+    open('#/data')
+    await renderApp(<App today={TODAY} authClient={server.authClient} repository={server.repository} />)
+    fireEvent.change(screen.getByLabelText('読み込むファイル'), { target: { files: [importFile()] } })
+    expect(await screen.findByRole('group', { name: '取り込みの確認' })).toBeInTheDocument()
+
+    // 別のタブで、ログアウトしてボブでログインする
+    await server.authClient.signOut()
+    await server.authClient.signIn('bob@example.com', MEMORY_MEMBER_PASSWORD)
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() => expect(screen.queryByRole('group', { name: '取り込みの確認' })).not.toBeInTheDocument())
+    expect(window.location.hash).toBe('#/data')
+    expect(screen.queryByRole('button', { name: '取り込む' })).not.toBeInTheDocument()
+
+    // ボブの記録には、アリスのために選んだ記録は入っていない
+    expect(await server.repository.listAll()).toEqual([])
+  })
+
+  test('ログアウトしていたら、タブに戻ったときに、ログインの画面に移り、期限切れの文言を出す', async () => {
+    const server = createServer('alice@example.com')
+    await renderApp(<App today={TODAY} authClient={server.authClient} repository={server.repository} />)
+    await addItem('朝', 'ごはん')
+
+    // 別のタブでログアウトする
+    await server.authClient.signOut()
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    expect(await screen.findByText(AUTH_MESSAGES.sessionExpired)).toBeInTheDocument()
+    expect(window.location.hash).toBe('#/login/session-expired')
+    expect(screen.queryByText('ごはん')).not.toBeInTheDocument()
+  })
+
+  test('同じ会員のままなら、タブに戻ったときに、取り込む前の確認を残す', async () => {
+    const server = createServer('alice@example.com')
+    open('#/data')
+    await renderApp(<App today={TODAY} authClient={server.authClient} repository={server.repository} />)
+    fireEvent.change(screen.getByLabelText('読み込むファイル'), { target: { files: [importFile()] } })
+    await screen.findByRole('group', { name: '取り込みの確認' })
+
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(screen.getByRole('group', { name: '取り込みの確認' })).toBeInTheDocument()
   })
 })
 
