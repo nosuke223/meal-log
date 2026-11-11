@@ -153,7 +153,8 @@ npm ci
 | `npm run test` | Vitest を1回実行して終わる |
 | `npm run build` | 型検査とビルドを行う（出力は `dist/`） |
 | `npm run e2e` | Playwright（Chromium）で画面を操作するテストを実行する。開発サーバー（`npm run dev`）は自動で起動する |
-| `npm run db:migrate:local` | 手元の D1（wrangler のローカル。保存先は `.wrangler/`）に、D1 のマイグレーションを適用する |
+| `npm run db:migrate:local` | 手元の D1（wrangler のローカル。保存先は `.wrangler/`）に、D1 のマイグレーションを適用する（API も最初のリクエストで自分で当てるので、なくても動く。下の「D1 の表」） |
+| `npm run bundle-migrations` | `migrations/*.sql` を、アプリに含める `server/migrations.generated.ts` に書き出す。`dev`、`lint`、`test`、`build`、`e2e`、`dev:api` の前に自動で動く（`pre…` のスクリプト） |
 | `npm run dev:api` | ビルドした画面と API を、本番に近い形（`wrangler pages dev`）で、手元の D1 で起動する（<http://localhost:8788>） |
 
 `npm run e2e` を初めて実行する前に、ブラウザを入れてください。
@@ -282,6 +283,9 @@ npm run dev
 | `delete(id)` | `DELETE /api/meal?id=<id>` | なし | 204（本文なし） |
 | `markPlannedAsEatenBefore(date)` | `POST /api/mark-planned-as-eaten` | `{ "date": "YYYY-MM-DD" }`（基準の日。端末の現地の日付を呼び出し側が渡す。サーバーの時刻からは決めない） | 200 `{ "meals": [更新した記録, …] }` |
 | `importRecords(records)` | `POST /api/import` | `{ "records": [記録, …] }` | 204（本文なし） |
+| （窓口にはない） | `GET /api/health` | なし | 200 `{ "migrations": ["0001_create_meals.sql", …] }`（当てたマイグレーションの名前。番号順）。ログインなしで開ける |
+
+- `GET /api/health` は、動いていること（D1 につながり、表ができていること）を確かめるためのもの。認証より前に答える。返すのは、`d1_migrations` に記録されたマイグレーションの名前だけ（秘密の値、環境変数、記録、エラーの詳しい内容は返さない）。`GET` 以外は 405（`Allow: GET`）
 
 - 1件の記録は、`id` をクエリで指定する（`<id>` は `encodeURIComponent` でエンコードする）。取り込んだ記録の `id` には `/` や、`.`・`..` だけのものも入りうる。パス（`/api/meals/<id>`）に入れると、`.`・`..` が URL の正規化で消えてしまうため、クエリにしている。`id` がない、空、2つ以上、またはほかの条件があるときは 400
 - 一覧は、日付 → 区分（朝・昼・夜・間食）→ 作成日時 → ID の順に並ぶ
@@ -311,6 +315,10 @@ curl -X POST http://localhost:8788/api/meals -H 'Content-Type: application/json'
 | 415 | `UnsupportedMediaType` | 書き込みの `Content-Type` が `application/json` でない |
 | 500 | `MealStorageError` | 保存先（D1）の失敗、保存データが壊れている |
 | 500 | `AuthConfigurationError` | 認証の環境変数が足りない・不正、Access の公開鍵を取得できない |
+| 500 | `DatabaseNotConfigured` | D1 がつながっていない（Pages の設定で、D1 を `DB` の名前でつないでいない） |
+| 500 | `MigrationError` | 表の変更（マイグレーション）を当てられなかった（詳しい内容は応答に出さず、サーバーのログに残す） |
+
+`DatabaseNotConfigured` と `MigrationError` は、認証より前に確かめるので、ログインしていなくても返ります。
 
 ### 認証
 
@@ -335,7 +343,25 @@ Cloudflare Access が付けるヘッダー `Cf-Access-Jwt-Assertion` の JWT を
 
 ### D1 の表
 
-表のスキーマは、`migrations/` の下のマイグレーションのファイルで管理します（`npm run db:migrate:local` で手元の D1 に適用する）。
+表のスキーマは、`migrations/` の下のマイグレーションのファイルで管理します。
 
 - 表 `meals`: 1行が1品。列は記録の項目（`meal_type` のように小文字とアンダースコアの名前）と、メールアドレスの列 `user_email`
 - 主キーは `user_email` + `id`。日ごと・期間の取得用に、`user_email` + `date` の索引がある
+
+#### マイグレーションは、アプリが自分で当てる
+
+本番・プレビュー・手元のどれでも、API が、自分のつながっている D1 に、まだ当てていないマイグレーションを当てます（`server/migrate.ts`）。手で当てる必要はありません。
+
+- `migrations/*.sql` は、ビルドやテストの前に `npm run bundle-migrations`（`scripts/bundle-migrations.mjs`）が `server/migrations.generated.ts` に書き出し、アプリに含める。書き出したファイルはコミットしない（`.gitignore`）
+- API の入口で、その実行環境で最初のリクエストのときに1回だけ確かめ、まだのものを番号（ファイル名）の順に当てる。認証より前に行うので、ログインしていないリクエストでも当たる。2回目からは確かめない。失敗したときは 500（`MigrationError`）を返し、次のリクエストでやり直す
+- 当てたものは、wrangler と同じ表 `d1_migrations`（`id`、`name`、`applied_at`）に記録する。`wrangler d1 migrations apply`（`npm run db:migrate:local` や、`docs/deploy.md` の緊急用の手順）で当てた D1 とも食い違わず、どちらも適用済みのものは飛ばす
+- 1つのマイグレーションの SQL と記録は、D1 の batch（1つのトランザクション）で書く。途中で失敗したら、SQL も記録も残らない。同時に別のリクエストが同じものを当てていたら、記録の名前の重なりで取り消されるので、記録を読み直して次に進む（二重に当てない）
+- 文は `;` で区切る（`--` で始まる行はコメントとして除く）。文字列の中に `;` を書かない
+
+#### 表の変更の決まり（足すだけ）
+
+公開（新しいプログラム）とマイグレーションは同時ではないので、少しの間、新しいプログラムと古い表、または古いプログラムと新しい表が並びます。どちらの組み合わせでも動くよう、表の変更は「足すだけ」を基本にします。
+
+- 変えるときは、新しい番号のファイルを `migrations/` に足す。一度入れたファイルは変えない
+- 表や列を足す。足す列は、空（`NULL`）を許すか、既定の値（`DEFAULT`）を持たせる
+- 列や表を消す・名前を変えるのは、プログラムがそれを使わなくなってから、別の Issue で行う

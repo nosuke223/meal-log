@@ -5,9 +5,11 @@ import { MealNotFoundError, MealStorageError, type MealRepository } from '../src
 import { AuthConfigurationError, createAuthenticator, type AuthEnv } from './auth'
 import type { D1Database } from './d1'
 import { createD1MealRepository } from './d1MealRepository'
+import { applyMigrations, appliedMigrationNames, type Migration } from './migrate'
 
 export type ApiEnv = AuthEnv & {
-  DB: D1Database
+  /** つながっていない環境（Pages の設定で D1 をつないでいないとき）では無い */
+  DB?: D1Database
 }
 
 export type ApiOptions = {
@@ -17,6 +19,8 @@ export type ApiOptions = {
   generateId?: () => string
   /** Access の公開鍵の取得に使う。テストで差し替える */
   fetch?: typeof fetch
+  /** 当てるマイグレーション。テストで差し替える（既定は migrations/ のすべて） */
+  migrations?: readonly Migration[]
 }
 
 /** エラーの本文の type。画面でエラーの種類を見分けるのに使う */
@@ -29,6 +33,8 @@ export type ApiErrorType =
   | 'RouteNotFound'
   | 'MethodNotAllowed'
   | 'UnsupportedMediaType'
+  | 'DatabaseNotConfigured'
+  | 'MigrationError'
 
 /** エラーの本文の形 */
 export type ApiErrorBody = {
@@ -66,9 +72,32 @@ type RouteContext = {
 /** API のリクエストを処理する関数を作る */
 export function createApiHandler(options: ApiOptions = {}) {
   const authenticate = createAuthenticator({ fetch: options.fetch, now: options.now })
+  const migrations = options.migrations
+  // マイグレーションを当て終えたか（当てている途中なら、その処理）。この実行環境で最初のリクエストのときだけ当て、
+  // 失敗したら覚えず、次のリクエストでやり直す
+  let migrated: Promise<void> | null = null
+
+  function migrate(db: D1Database): Promise<void> {
+    migrated ??= applyMigrations(db, migrations).catch((error: unknown) => {
+      migrated = null
+      console.error(error)
+      throw new HttpError(500, 'MigrationError', '表の変更（マイグレーション）を当てられませんでした')
+    })
+    return migrated
+  }
 
   return async function handleApiRequest(request: Request, env: ApiEnv): Promise<Response> {
     try {
+      const db = env.DB
+      if (!db) {
+        throw new HttpError(500, 'DatabaseNotConfigured', 'データベース（D1）がつながっていません。DB の名前でつないでください')
+      }
+      // 認証より前に当てる（ログインしていないリクエストでも、表は当たっているようにする）
+      await migrate(db)
+
+      const url = new URL(request.url)
+      if (routeName(url.pathname) === 'health') return await handleHealth(request, db)
+
       let email: string | null
       try {
         email = await authenticate(request, env)
@@ -79,7 +108,6 @@ export function createApiHandler(options: ApiOptions = {}) {
       }
       if (email === null) throw new HttpError(401, 'Unauthorized', 'ログインしていないか、ログインの情報が正しくありません')
 
-      const url = new URL(request.url)
       const route = matchRoute(url.pathname)
       const handler = route.methods[request.method]
       if (!handler) {
@@ -89,7 +117,7 @@ export function createApiHandler(options: ApiOptions = {}) {
       if (WRITE_METHODS.includes(request.method) && !isJsonRequest(request)) {
         throw new HttpError(415, 'UnsupportedMediaType', '書き込みのリクエストは Content-Type: application/json にしてください')
       }
-      const repository = createD1MealRepository(env.DB, email, options)
+      const repository = createD1MealRepository(db, email, options)
       return await handler({ repository, url, request })
     } catch (error) {
       return errorResponse(error)
@@ -169,20 +197,35 @@ const importRoute: Route = {
   },
 }
 
-function matchRoute(pathname: string): Route {
+/**
+ * 動いていることを確かめる（ログインなしで開ける）。当てたマイグレーションの名前を番号順に返す。
+ * 秘密の値やエラーの詳しい内容は返さない
+ */
+async function handleHealth(request: Request, db: D1Database): Promise<Response> {
+  if (request.method !== 'GET') {
+    throw new HttpError(405, 'MethodNotAllowed', `この操作には対応していません: ${request.method}`, { Allow: 'GET' })
+  }
+  return json(200, { migrations: await appliedMigrationNames(db) })
+}
+
+/** /api/<名前> の名前（デコードしたもの）。その形でなければ null */
+function routeName(pathname: string): string | null {
   const segments = pathname.split('/').filter((segment) => segment !== '')
   let decoded: string[]
   try {
     decoded = segments.map((segment) => decodeURIComponent(segment))
   } catch {
-    throw new HttpError(404, 'RouteNotFound', `この API はありません: ${pathname}`)
+    return null
   }
-  if (decoded[0] === 'api' && decoded.length === 2) {
-    if (decoded[1] === 'meals') return mealsRoute
-    if (decoded[1] === 'meal') return mealRoute
-    if (decoded[1] === 'mark-planned-as-eaten') return markPlannedRoute
-    if (decoded[1] === 'import') return importRoute
-  }
+  return decoded[0] === 'api' && decoded.length === 2 ? decoded[1] : null
+}
+
+function matchRoute(pathname: string): Route {
+  const name = routeName(pathname)
+  if (name === 'meals') return mealsRoute
+  if (name === 'meal') return mealRoute
+  if (name === 'mark-planned-as-eaten') return markPlannedRoute
+  if (name === 'import') return importRoute
   throw new HttpError(404, 'RouteNotFound', `この API はありません: ${pathname}`)
 }
 

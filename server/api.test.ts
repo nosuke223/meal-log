@@ -813,6 +813,8 @@ describe('リクエストの形', () => {
 describe('保存先の失敗', () => {
   it('D1 が失敗すると 500（MealStorageError）', async () => {
     const call = createClient()
+    // マイグレーションの確かめは、最初のリクエストで済ませておく（失敗させたいのは記録の読み書き）
+    expect((await call('GET', '/api/meals')).status).toBe(200)
     const brokenDb: D1Database = {
       prepare: () => database.db.prepare('SELECT * FROM no_such_table'),
       batch: (statements) => database.db.batch(statements),

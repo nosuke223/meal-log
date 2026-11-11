@@ -7,6 +7,9 @@ dist/
 playwright-report/
 test-results/
 
+# migrations/*.sql から作る、アプリに含めるマイグレーションの一覧（scripts/bundle-migrations.mjs）
+server/migrations.generated.ts
+
 # wrangler の手元の D1 などの保存先
 .wrangler/
 
