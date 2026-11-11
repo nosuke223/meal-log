@@ -1,5 +1,5 @@
 import type { Browser, Page } from '@playwright/test'
-import { createMember, expect, MealApi, MEMBER_PASSWORD, signInMember, test, type Member } from './fixtures'
+import { createMember, expect, MealApi, MEMBER_PASSWORD, NO_COOKIES, signInMember, test, type Member } from './fixtures'
 
 // 記録はサーバーに保存されるので、同じ会員なら、別のブラウザ（別の端末）でログインしても同じ記録が見える
 
@@ -157,7 +157,8 @@ test('ログアウトして別の会員でログインしても、前の会員�
 })
 
 test('ログインしていないと、記録、カレンダー、データの画面は開けず、ログインの画面に移る', async ({ browser, baseURL }) => {
-  const context = await browser.newContext({ baseURL })
+  // 渡さないと、テストの会員のログインの cookie を使う（NO_COOKIES）
+  const context = await browser.newContext({ baseURL, ...NO_COOKIES })
   try {
     const page = await context.newPage()
     for (const hash of ['#/', '#/day/2026-11-03', '#/calendar/2026-11', '#/data']) {

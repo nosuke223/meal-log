@@ -62,6 +62,12 @@ export function randomTestIp(): string {
 
 type Playwright = PlaywrightWorkerArgs['playwright']
 
+/**
+ * cookie のない状態。browser.newContext と playwright.request.newContext は、渡さなかった設定に、
+ * テストの設定（テストの会員のログインの cookie を含む storageState）を使うので、別の会員やログインしていない状態にするときに渡す
+ */
+export const NO_COOKIES = { storageState: { cookies: [], origins: [] } }
+
 /** テストの会員のパスワード */
 export const MEMBER_PASSWORD = 'e2e-password-123'
 
@@ -82,6 +88,7 @@ export async function signInMember(playwright: Playwright, baseURL: string | und
   const request = await playwright.request.newContext({
     baseURL,
     extraHTTPHeaders: { 'Content-Type': 'application/json', 'CF-Connecting-IP': randomTestIp() },
+    ...NO_COOKIES,
   })
   const response = await request.post('/api/auth/sign-in/email', {
     data: { email, password: MEMBER_PASSWORD },
@@ -100,6 +107,7 @@ export async function createMember(playwright: Playwright, baseURL: string | und
   const request = await playwright.request.newContext({
     baseURL,
     extraHTTPHeaders: { 'Content-Type': 'application/json', 'CF-Connecting-IP': randomTestIp() },
+    ...NO_COOKIES,
   })
   try {
     const signedUp = await request.post('/api/auth/sign-up/email', {
