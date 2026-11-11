@@ -1,12 +1,11 @@
 // テスト用の D1。wrangler（Miniflare）で手元に再現し、保存せずメモリーの中だけで使う
 
-import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { getPlatformProxy } from 'wrangler'
 import type { D1Database } from './d1'
+import { applyMigrations } from './migrate'
 
 const CONFIG_PATH = fileURLToPath(new URL('../wrangler.dev.jsonc', import.meta.url))
-const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url))
 
 export type TestDatabase = {
   db: D1Database
@@ -15,13 +14,21 @@ export type TestDatabase = {
   dispose(): Promise<void>
 }
 
-/** 手元の D1 を起動し、マイグレーションを適用する */
-export async function startTestDatabase(): Promise<TestDatabase> {
-  const proxy = await getPlatformProxy<{ DB: D1Database }>({ configPath: CONFIG_PATH, persist: false })
+export type TestDatabaseOptions = {
+  /** マイグレーションを当てる（既定は当てる）。false なら空の D1 のまま返す */
+  migrate?: boolean
+  /** 保存先。wrangler の --persist-to に渡した場所の下の v3。省くと保存しない */
+  persistPath?: string
+}
+
+/** 手元の D1 を起動し、マイグレーションを適用する（アプリが自分で当てるときと同じ処理で当てる） */
+export async function startTestDatabase(options: TestDatabaseOptions = {}): Promise<TestDatabase> {
+  const proxy = await getPlatformProxy<{ DB: D1Database }>({
+    configPath: CONFIG_PATH,
+    persist: options.persistPath === undefined ? false : { path: options.persistPath },
+  })
   const db = proxy.env.DB
-  for (const statement of migrationStatements()) {
-    await db.prepare(statement).run()
-  }
+  if (options.migrate !== false) await applyMigrations(db)
   return {
     db,
     async reset() {
@@ -31,18 +38,12 @@ export async function startTestDatabase(): Promise<TestDatabase> {
   }
 }
 
-/** マイグレーションのファイルを、名前の順に、文ごとに分けて返す（コメントの行は除く） */
-function migrationStatements(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((file) => file.endsWith('.sql'))
-    .sort()
-    .flatMap((file) =>
-      readFileSync(`${MIGRATIONS_DIR}${file}`, 'utf8')
-        .split('\n')
-        .filter((line) => !line.trim().startsWith('--'))
-        .join('\n')
-        .split(';')
-        .map((statement) => statement.trim())
-        .filter((statement) => statement !== ''),
-    )
+/** 表をすべて消し、空の D1 に戻す（D1 が中で使う表は残す） */
+export async function dropAllTables(db: D1Database): Promise<void> {
+  const { results } = await db
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")
+    .all<{ name: string }>()
+  for (const { name } of results) {
+    await db.prepare(`DROP TABLE "${name}"`).run()
+  }
 }

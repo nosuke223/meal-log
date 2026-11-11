@@ -4,12 +4,19 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "bundle-migrations": "node scripts/bundle-migrations.mjs",
+    "predev": "npm run bundle-migrations",
     "dev": "npm run db:migrate:local && vite",
+    "prelint": "npm run bundle-migrations",
     "lint": "eslint .",
+    "pretest": "npm run bundle-migrations",
     "test": "vitest run",
+    "prebuild": "npm run bundle-migrations",
     "build": "tsc -b && vite build",
+    "pree2e": "npm run bundle-migrations",
     "e2e": "playwright test",
     "db:migrate:local": "wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc",
+    "predev:api": "npm run bundle-migrations",
     "dev:api": "vite build && npm run db:migrate:local && wrangler pages dev dist --d1 DB=meal-log-local --compatibility-date 2026-11-01 --binding DEV_USER_EMAIL=dev@example.com"
   },
   "devDependencies": {
