@@ -1,16 +1,29 @@
-import type { AuthClient } from './authClient'
+import { AUTH_MESSAGES, type AuthClient, type EmailVerificationResult } from './authClient'
 import { CredentialsForm } from './CredentialsForm'
+import { ResendVerificationForm } from './ResendVerification'
 
 type Props = {
   authClient: AuthClient
+  /** 確認のメールのリンクを開いた結果。なければ null */
+  verification?: EmailVerificationResult | null
   /** ログインできたとき */
   onSignedIn: () => void
   onOpenSignup: () => void
   onBack: () => void
 }
 
+/** 確認のメールのリンクを開いた結果の説明と、送り直しのフォームを出すか */
+const VERIFICATION_NOTICES: Record<EmailVerificationResult, { message: string; failed: boolean; resend: boolean }> = {
+  verified: { message: AUTH_MESSAGES.emailVerified, failed: false, resend: false },
+  'link-used': { message: AUTH_MESSAGES.linkUsed, failed: true, resend: true },
+  'link-expired': { message: AUTH_MESSAGES.linkExpired, failed: true, resend: true },
+  'link-invalid': { message: AUTH_MESSAGES.linkInvalid, failed: true, resend: true },
+  'link-error': { message: AUTH_MESSAGES.linkError, failed: true, resend: false },
+}
+
 /** ログインの画面 */
-export function LoginScreen({ authClient, onSignedIn, onOpenSignup, onBack }: Props) {
+export function LoginScreen({ authClient, verification = null, onSignedIn, onOpenSignup, onBack }: Props) {
+  const notice = verification === null ? null : VERIFICATION_NOTICES[verification]
   return (
     <main className="screen">
       <header className="screen-header">
@@ -19,11 +32,20 @@ export function LoginScreen({ authClient, onSignedIn, onOpenSignup, onBack }: Pr
           記録の画面へ
         </button>
       </header>
+      {notice && (
+        <section className="section" aria-label="メールアドレスの確認">
+          <p role={notice.failed ? 'alert' : 'status'} className={notice.failed ? 'error' : 'description'}>
+            {notice.message}
+          </p>
+          {notice.resend && <ResendVerificationForm authClient={authClient} />}
+        </section>
+      )}
       <section className="section">
         <CredentialsForm
           label="ログイン"
           mode="signIn"
           submitLabel="ログイン"
+          resendClient={authClient}
           onSubmit={async (email, password) => {
             await authClient.signIn(email, password)
             onSignedIn()

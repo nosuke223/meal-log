@@ -1,4 +1,5 @@
 import { expect, test } from 'vitest'
+import { EMAIL_VERIFICATION_RESULTS } from './auth/authClient'
 import {
   accountHash,
   calendarDateHash,
@@ -71,7 +72,15 @@ test('ログイン、会員登録、アカウントのハッシュは、それ�
   expect(loginHash()).toBe('#/login')
   expect(signupHash()).toBe('#/signup')
   expect(accountHash()).toBe('#/account')
-  expect(parseHash(loginHash(), TODAY)).toEqual({ screen: 'login' })
+  expect(parseHash(loginHash(), TODAY)).toEqual({ screen: 'login', verification: null })
   expect(parseHash(signupHash(), TODAY)).toEqual({ screen: 'signup' })
   expect(parseHash(accountHash(), TODAY)).toEqual({ screen: 'account' })
+})
+
+test('確認のメールのリンクの結果のハッシュは、結果を付けたログインの画面にする。知らない結果は、ただのログインの画面', () => {
+  for (const result of EMAIL_VERIFICATION_RESULTS) {
+    expect(loginHash(result)).toBe(`#/login/${result}`)
+    expect(parseHash(loginHash(result), TODAY)).toEqual({ screen: 'login', verification: result })
+  }
+  expect(parseHash('#/login/unknown', TODAY)).toEqual({ screen: 'login', verification: null })
 })

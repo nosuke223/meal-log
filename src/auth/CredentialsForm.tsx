@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from 'react'
-import { AuthError, checkCredentials, MIN_PASSWORD_LENGTH } from './authClient'
+import { AuthError, checkCredentials, EmailNotVerifiedError, MIN_PASSWORD_LENGTH, type AuthClient } from './authClient'
+import { ResendVerificationButton } from './ResendVerification'
 
 type Props = {
   /** フォームの名前（読み上げ用） */
@@ -8,6 +9,8 @@ type Props = {
   submitLabel: string
   /** 送る。失敗したら AuthError（message は画面に出す日本語の説明） */
   onSubmit: (email: string, password: string) => Promise<void>
+  /** 渡すと、メールアドレスの確認が済んでいないときに「確認のメールをもう一度送る」ボタンを出す（ログインで使う） */
+  resendClient?: AuthClient
 }
 
 function messageOf(error: unknown): string {
@@ -16,10 +19,12 @@ function messageOf(error: unknown): string {
 }
 
 /** メールアドレスとパスワードを入れるフォーム（ログインと会員登録で使う） */
-export function CredentialsForm({ label, mode, submitLabel, onSubmit }: Props) {
+export function CredentialsForm({ label, mode, submitLabel, onSubmit, resendClient }: Props) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // 確認が済んでいないと断られたときの、送ったメールアドレス（送り直しの宛先）
+  const [unverifiedEmail, setUnverifiedEmail] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const id = useId()
   const emailId = `${id}-email`
@@ -35,11 +40,13 @@ export function CredentialsForm({ label, mode, submitLabel, onSubmit }: Props) {
       return
     }
     setError(null)
+    setUnverifiedEmail(null)
     setBusy(true)
     try {
       await onSubmit(email.trim(), password)
     } catch (cause) {
       setError(messageOf(cause))
+      if (cause instanceof EmailNotVerifiedError) setUnverifiedEmail(email.trim())
       setBusy(false)
     }
   }
@@ -51,6 +58,9 @@ export function CredentialsForm({ label, mode, submitLabel, onSubmit }: Props) {
         <p role="alert" className="error">
           {error}
         </p>
+      )}
+      {resendClient && unverifiedEmail !== null && (
+        <ResendVerificationButton authClient={resendClient} email={unverifiedEmail} />
       )}
       <div className="field">
         <label htmlFor={emailId} className="field-label">

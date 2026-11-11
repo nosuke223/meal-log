@@ -5,6 +5,7 @@ import { MealNotFoundError, MealStorageError, type MealRepository } from '../src
 import { AuthConfigurationError, createAuthenticator, type AuthEnv } from './auth'
 import type { D1Database } from './d1'
 import { createD1MealRepository } from './d1MealRepository'
+import type { MailTransport } from './mail/mailer'
 import { createMemberAuthHandler, isAuthPath, type MemberAuthEnv } from './memberAuth'
 import { applyMigrations, appliedMigrationNames, type Migration } from './migrate'
 
@@ -22,6 +23,8 @@ export type ApiOptions = {
   fetch?: typeof fetch
   /** 当てるマイグレーション。テストで差し替える（既定は migrations/ のすべて） */
   migrations?: readonly Migration[]
+  /** メールを送る部分。省略すると Resend の API で送る。テストと手元の開発サーバーで差し替える */
+  mailTransport?: MailTransport
 }
 
 /** エラーの本文の type。画面でエラーの種類を見分けるのに使う */
@@ -36,6 +39,8 @@ export type ApiErrorType =
   | 'UnsupportedMediaType'
   | 'DatabaseNotConfigured'
   | 'MigrationError'
+  | 'MailConfigurationError'
+  | 'MailSendError'
 
 /** エラーの本文の形 */
 export type ApiErrorBody = {
@@ -73,7 +78,7 @@ type RouteContext = {
 /** API のリクエストを処理する関数を作る */
 export function createApiHandler(options: ApiOptions = {}) {
   const authenticate = createAuthenticator({ fetch: options.fetch, now: options.now })
-  const handleMemberAuth = createMemberAuthHandler()
+  const handleMemberAuth = createMemberAuthHandler({ mailTransport: options.mailTransport })
   const migrations = options.migrations
   // マイグレーションを当て終えたか（当てている途中なら、その処理）。この実行環境で最初のリクエストのときだけ当て、
   // 失敗したら覚えず、次のリクエストでやり直す
