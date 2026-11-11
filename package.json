@@ -17,7 +17,7 @@
     "e2e": "playwright test",
     "db:migrate:local": "wrangler d1 migrations apply DB --local --config wrangler.dev.jsonc",
     "predev:api": "npm run bundle-migrations",
-    "dev:api": "vite build && npm run db:migrate:local && wrangler pages dev dist --d1 DB=meal-log-local --compatibility-date 2026-11-01 --binding DEV_USER_EMAIL=dev@example.com"
+    "dev:api": "vite build && npm run db:migrate:local && wrangler pages dev dist --d1 DB=meal-log-local --compatibility-date 2026-11-01 --compatibility-flags nodejs_compat --binding DEV_USER_EMAIL=dev@example.com --binding BETTER_AUTH_SECRET=meal-log-local-development-only-secret-do-not-use-in-production"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -28,6 +28,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.2.1",
+    "better-auth": "^1.7.20",
     "eslint": "^10.14.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.14.0",

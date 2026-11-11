@@ -1,6 +1,7 @@
 // 手元の開発（npm run dev）と e2e 専用。Vite の開発サーバーで /api/ 以下を API（server/api.ts）で処理する。
 // 保存先は手元の D1（wrangler の Miniflare。npm run db:migrate:local と同じ .wrangler/ の下）。
-// 認証は省く（DEV_USER_EMAIL）。開発サーバーだけに入れる（apply: 'serve'）ので、ビルドした本番のアプリには入らない
+// 認証は省く（DEV_USER_EMAIL）。会員のログイン（/api/auth/）の秘密の値は、開発専用の値を渡す（DEV_BETTER_AUTH_SECRET）。
+// 開発サーバーだけに入れる（apply: 'serve'）ので、ビルドした本番のアプリには入らない
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { fileURLToPath } from 'node:url'
@@ -18,6 +19,15 @@ export const DEV_USER_EMAIL = 'dev@example.com'
  * e2e で、テストごとに別の人にして、記録が混ざらないようにするのに使う
  */
 export const DEV_USER_HEADER = 'x-dev-user-email'
+
+/**
+ * 会員のログイン（Better Auth）の秘密の値。手元の開発とテスト専用（本番とプレビューには、別の値を Cloudflare 側で入れる）。
+ * DEV_USER_EMAIL と同じく、起動するときだけ API に渡し、設定ファイルには書かない
+ */
+export const DEV_BETTER_AUTH_SECRET = 'meal-log-local-development-only-secret-do-not-use-in-production'
+
+/** 利用者の IP アドレスのヘッダー（本番では Cloudflare が付ける。試す回数の上限を数えるのに使う） */
+const CLIENT_IP_HEADER = 'cf-connecting-ip'
 
 export function devApiPlugin(): Plugin {
   return {
@@ -68,9 +78,24 @@ export function devApiPlugin(): Plugin {
         const api = await start()
         const header = req.headers[DEV_USER_HEADER]
         const email = typeof header === 'string' && header.trim() !== '' ? header : DEV_USER_EMAIL
-        const response = await api.handle(await toRequest(req), { DB: api.db, DEV_USER_EMAIL: email })
+        const request = await toRequest(req)
+        // 本番の Cloudflare と同じく、利用者の IP アドレスを付ける。e2e は、テストごとに別の値をヘッダーで送り、
+        // 試す回数の上限がテストの間で混ざらないようにする（開発サーバーだけ）
+        if (!request.headers.has(CLIENT_IP_HEADER) && req.socket.remoteAddress) {
+          request.headers.set(CLIENT_IP_HEADER, req.socket.remoteAddress)
+        }
+        const response = await api.handle(request, {
+          DB: api.db,
+          DEV_USER_EMAIL: email,
+          BETTER_AUTH_SECRET: DEV_BETTER_AUTH_SECRET,
+        })
         res.statusCode = response.status
-        response.headers.forEach((value, key) => res.setHeader(key, value))
+        response.headers.forEach((value, key) => {
+          if (key !== 'set-cookie') res.setHeader(key, value)
+        })
+        // cookie が複数あるときに1つにまとめない
+        const cookies = response.headers.getSetCookie()
+        if (cookies.length > 0) res.setHeader('Set-Cookie', cookies)
         res.end(Buffer.from(await response.arrayBuffer()))
       }
     },

@@ -5,6 +5,8 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "meal-log",
   "compatibility_date": "2026-11-01",
+  // 会員のログイン（Better Auth）が AsyncLocalStorage を使うため。本番とプレビューにも、Cloudflare 側で同じフラグを入れる（docs/deploy.md）
+  "compatibility_flags": ["nodejs_compat"],
   "d1_databases": [
     {
       "binding": "DB",
