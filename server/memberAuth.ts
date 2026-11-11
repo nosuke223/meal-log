@@ -60,7 +60,8 @@ export const TOO_MANY_REQUESTS_MESSAGE = AUTH_MESSAGES.tooManyRequests
  * メールを送ることがあるアドレス。上の上限とは別に、宛先のメールアドレスと IP アドレスの組み合わせごとに、
  * 送る回数の上限（server/mail/mailRateLimit.ts）を数える。登録の有無を探られないよう、実際に送るかどうかに関係なく数える
  */
-const MAIL_PATHS = ['/sign-up/email', '/send-verification-email', '/request-password-reset']
+const RESET_PATHS = ['/request-password-reset', '/reset-password']
+const MAIL_PATHS =['/sign-up/email', '/send-verification-email', '/request-password-reset']
 
 /**
  * リクエストごとに付ける ID のヘッダー（このファイルの中だけで使う。外から来た同じ名前のヘッダーは消す）。
@@ -222,6 +223,16 @@ export function createMemberAuthHandler(options: MemberAuthHandlerOptions = {}) 
 
     const path = url.pathname.slice(AUTH_BASE_PATH.length)
     if (path === '/verify-email' && request.method === 'GET') return handleVerifyEmail(url, request, auth, db)
+    // Better Auth のオリジンの確認は、cookie のないリクエストには効かないので、再設定の入口は自分で確かめる
+    if (RESET_PATHS.includes(path) && request.method === 'POST') {
+      const requestOrigin = request.headers.get('Origin')
+      if (requestOrigin !== null && requestOrigin !== origin) {
+        return new Response(JSON.stringify({ code: 'INVALID_ORIGIN', message: 'Invalid origin' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+        })
+      }
+    }
     if (MAIL_PATHS.includes(path) && request.method === 'POST') {
       const limited = await limitMail(request, db)
       if (limited !== null) return limited
