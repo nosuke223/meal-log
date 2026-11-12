@@ -95,6 +95,53 @@ describe('マイグレーションを当てる処理', () => {
     expect(await tableNames()).toContain('member_meals')
     expect(await appliedMigrationNames(database.db)).toEqual(MIGRATIONS.map((migration) => migration.name))
     expect(MIGRATIONS.map((migration) => migration.name)).toContain('0003_create_member_meals.sql')
+    expect(await tableNames()).not.toContain('meals')
+  })
+
+  describe('古い記録の表（meals）を消す 0004_drop_meals.sql', () => {
+    const DROP = '0004_drop_meals.sql'
+    const before = () => MIGRATIONS.filter((migration) => migration.name < DROP)
+
+    it('meals の行があっても失敗せず、meals と索引だけが消え、ほかの表の行は変わらない', async () => {
+      await applyMigrations(database.db, before())
+      expect(await tableNames()).toContain('meals')
+      await database.db
+        .prepare(
+          "INSERT INTO meals (user_email, id, date, meal_type, name, status, created_at, updated_at) VALUES ('a@example.com', 'm1', '2026-11-01', 'lunch', 'うどん', 'eaten', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z')",
+        )
+        .run()
+      await database.db
+        .prepare(
+          "INSERT INTO \"user\" (id, name, email, emailVerified, createdAt, updatedAt) VALUES ('u1', 'A', 'a@example.com', 1, 0, 0)",
+        )
+        .run()
+      await database.db
+        .prepare(
+          "INSERT INTO member_meals (user_id, id, date, meal_type, name, status, created_at, updated_at) VALUES ('u1', 'm1', '2026-11-01', 'lunch', 'うどん', 'eaten', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z')",
+        )
+        .run()
+
+      await applyMigrations(database.db)
+
+      expect(await tableNames()).not.toContain('meals')
+      const index = await database.db
+        .prepare("SELECT name FROM sqlite_master WHERE name = 'meals_user_email_date'")
+        .first()
+      expect(index).toBeNull()
+      expect(await countRows('member_meals')).toBe(1)
+      expect(await countRows('"user"')).toBe(1)
+      expect(await appliedMigrationNames(database.db)).toContain(DROP)
+    })
+
+    it('meals がすでにない D1 に当てても、失敗しない', async () => {
+      await applyMigrations(database.db, before())
+      await database.db.prepare('DROP TABLE meals').run()
+
+      await applyMigrations(database.db)
+
+      expect(await tableNames()).not.toContain('meals')
+      expect(await appliedMigrationNames(database.db)).toContain(DROP)
+    })
   })
 
   it('番号順に当てる（渡した順によらない）', async () => {
@@ -224,6 +271,7 @@ describe('GET /api/health', () => {
     expect(response.status).toBe(200)
     expect(response.body).toEqual({ migrations: MIGRATIONS.map((migration) => migration.name) })
     expect(response.body.migrations).toContain('0001_create_meals.sql')
+    expect(response.body.migrations).toContain('0004_drop_meals.sql')
     expect(response.headers.get('Cache-Control')).toBe('no-store')
     expect(response.text).not.toContain(SECRET)
   })

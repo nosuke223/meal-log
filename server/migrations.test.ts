@@ -53,6 +53,16 @@ describe('D1 のマイグレーション', () => {
     const result = JSON.parse(output) as { results: { name: string }[] }[]
     expect(result[0].results).toEqual([{ name: 'member_meals' }])
 
+    const dropped = await wrangler(
+      'd1',
+      'execute',
+      'DB',
+      '--json',
+      '--command',
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meals'",
+    )
+    expect((JSON.parse(dropped) as { results: unknown[] }[])[0].results).toEqual([])
+
     // 2回目は、適用済みなので何もしない（失敗しない）
     await wrangler('d1', 'migrations', 'apply', 'DB')
   })
