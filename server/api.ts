@@ -2,7 +2,8 @@
 // 記録の API は、cookie のセッション（会員のログイン）で本人を確かめ、その会員の記録だけを読み書きする
 
 import { MealValidationError, type MealChanges, type MealInput } from '../src/meals/mealRecord'
-import { MealNotFoundError, MealStorageError, type MealRepository } from '../src/meals/mealRepository'
+import { MealNotFoundError, MealStorageError, PlanLimitError, type MealRepository } from '../src/meals/mealRepository'
+import type { PlanStatus } from '../src/meals/plan'
 import type { D1Database } from './d1'
 import { createD1MealRepository } from './d1MealRepository'
 import type { MailTransport } from './mail/mailer'
@@ -13,11 +14,17 @@ import {
   type AuthenticatedMember,
   type MemberAuthEnv,
 } from './memberAuth'
+import { parseFreePlanRecordLimit, readPlanUsage, recordLimitFor } from './memberPlan'
 import { applyMigrations, appliedMigrationNames, type Migration } from './migrate'
 
 export type ApiEnv = MemberAuthEnv & {
   /** つながっていない環境（Pages の設定で D1 をつないでいないとき）では無い */
   DB?: D1Database
+  /**
+   * 無料のプランで保存できる記録の数（1以上の整数）。プレビューで上限を手早く試すためのもの。
+   * 本番には設定しない（ないときは src/meals/plan.ts の FREE_PLAN_RECORD_LIMIT）
+   */
+  FREE_PLAN_RECORD_LIMIT?: string
 }
 
 export type ApiOptions = {
@@ -46,12 +53,15 @@ export type ApiErrorType =
   | 'MigrationError'
   | 'MailConfigurationError'
   | 'MailSendError'
+  | 'PlanLimitExceeded'
 
-/** エラーの本文の形 */
+/** エラーの本文の形。上限のエラー（PlanLimitExceeded）のときだけ、limit（上限）と count（今の記録の数）が入る */
 export type ApiErrorBody = {
   error: {
     type: ApiErrorType
     message: string
+    limit?: number
+    count?: number
   }
 }
 
@@ -78,6 +88,8 @@ type RouteContext = {
   repository: MealRepository
   url: URL
   request: Request
+  /** ログインした会員のプランと記録の数を読む */
+  readPlan: () => Promise<PlanStatus>
 }
 
 /** API のリクエストを処理する関数を作る */
@@ -95,6 +107,16 @@ export function createApiHandler(options: ApiOptions = {}) {
       throw new HttpError(500, 'MigrationError', '表の変更（マイグレーション）を当てられませんでした')
     })
     return migrated
+  }
+
+  // 無料のプランの上限。環境変数の解析（と使えない値のときの警告）は、同じ値につき1回だけ行う
+  let freePlanLimit: { value: string | undefined; limit: number } | null = null
+  function freePlanRecordLimit(env: ApiEnv): number {
+    const value = env.FREE_PLAN_RECORD_LIMIT
+    if (freePlanLimit === null || freePlanLimit.value !== value) {
+      freePlanLimit = { value, limit: parseFreePlanRecordLimit(value) }
+    }
+    return freePlanLimit.limit
   }
 
   return async function handleApiRequest(request: Request, env: ApiEnv): Promise<Response> {
@@ -133,8 +155,20 @@ export function createApiHandler(options: ApiOptions = {}) {
           throw new HttpError(415, 'UnsupportedMediaType', '書き込みのリクエストは Content-Type: application/json にしてください')
         }
       }
-      const repository = createD1MealRepository(db, member.id, options)
-      return await handler({ repository, url, request })
+      const freeLimit = freePlanRecordLimit(env)
+      const repository = createD1MealRepository(db, member.id, { ...options, freePlanRecordLimit: freeLimit })
+      const memberId = member.id
+      const readPlan = async (): Promise<PlanStatus> => {
+        let usage
+        try {
+          usage = await readPlanUsage(db, memberId)
+        } catch (error) {
+          const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+          throw new MealStorageError(`保存先から読み込めません（${reason}）`, { cause: error })
+        }
+        return { plan: usage.plan, limit: recordLimitFor(usage.plan, freeLimit), count: usage.count }
+      }
+      return await handler({ repository, url, request, readPlan })
     } catch (error) {
       return errorResponse(error)
     }
@@ -212,6 +246,14 @@ const markPlannedRoute: Route = {
   },
 }
 
+const planRoute: Route = {
+  methods: {
+    async GET({ readPlan }) {
+      return json(200, await readPlan())
+    },
+  },
+}
+
 const importRoute: Route = {
   methods: {
     async POST({ repository, request }) {
@@ -252,6 +294,7 @@ function matchRoute(pathname: string): Route {
   if (name === 'meal') return mealRoute
   if (name === 'mark-planned-as-eaten') return markPlannedRoute
   if (name === 'import') return importRoute
+  if (name === 'plan') return planRoute
   throw new HttpError(404, 'RouteNotFound', `この API はありません: ${pathname}`)
 }
 
@@ -293,6 +336,12 @@ function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) return json(error.status, errorBody(error.type, error.message), error.headers)
   if (error instanceof MealValidationError) return json(400, errorBody('MealValidationError', error.message))
   if (error instanceof MealNotFoundError) return json(404, errorBody('MealNotFoundError', error.message))
+  if (error instanceof PlanLimitError) {
+    const body = errorBody('PlanLimitExceeded', error.message)
+    if (error.limit !== null) body.error.limit = error.limit
+    if (error.count !== null) body.error.count = error.count
+    return json(403, body)
+  }
   if (error instanceof MealStorageError) {
     console.error(error)
     return json(500, errorBody('MealStorageError', error.message))

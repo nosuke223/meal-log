@@ -1,5 +1,11 @@
 import { MealValidationError, type MealRecord } from './mealRecord'
-import { LoginExpiredError, MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
+import {
+  LoginExpiredError,
+  MealNotFoundError,
+  MealStorageError,
+  PlanLimitError,
+  type MealRepository,
+} from './mealRepository'
 
 /** ログインの期限が切れたとき（API が 401 を返した、ログイン画面へ転送された）のエラーのメッセージ */
 export const LOGIN_EXPIRED_MESSAGE = 'ログインの期限が切れました。ログインし直してください'
@@ -108,15 +114,26 @@ function isLoginExpired(response: Response): boolean {
 async function errorOf(response: Response, id: string | undefined): Promise<Error> {
   let type: unknown
   let message: unknown
+  let limit: unknown
+  let count: unknown
   try {
-    const body = (await response.json()) as { error?: { type?: unknown; message?: unknown } }
+    const body = (await response.json()) as {
+      error?: { type?: unknown; message?: unknown; limit?: unknown; count?: unknown }
+    }
     type = body.error?.type
     message = body.error?.message
+    limit = body.error?.limit
+    count = body.error?.count
   } catch {
     // 本文が読めないときは、状態コードだけで決める
   }
   const detail = typeof message === 'string' && message !== '' ? message : null
   if (response.status === 400) return new MealValidationError(detail ?? '不正な値です')
+  // 403 は、他のオリジンからの書き込みの拒否（Forbidden）にも使うので、type で見分ける
+  if (response.status === 403 && type === 'PlanLimitExceeded') {
+    const details = typeof limit === 'number' && typeof count === 'number' ? { limit, count } : null
+    return new PlanLimitError(detail ?? '無料のプランの記録の上限に達しています', details)
+  }
   // 404 でも、ない API のアドレス（RouteNotFound）は、記録がないのではなく、サーバーの不具合として扱う
   if (response.status === 404 && type === 'MealNotFoundError') return new MealNotFoundError(id ?? '')
   return new MealStorageError(`サーバーでエラーが起きました（${response.status}${detail ? `: ${detail}` : ''}）`)

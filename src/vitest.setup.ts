@@ -16,6 +16,16 @@ vi.mock('./auth/defaultAuthClient', async () => {
   return { createDefaultAuthClient: () => createMemoryAuthClient({ signedInAs: 'member@example.com' }) }
 })
 
+// プランの窓口も、サーバーの API（/api/plan）ではなく、メモリーの中だけで動く窓口に差し替える。
+// 無料のプランで、記録の数はブラウザ内（localStorage）の記録を数える
+vi.mock('./plan/defaultPlanClient', async () => {
+  const { createMemoryPlanClient } = await import('./plan/memoryPlanClient')
+  const { createLocalStorageMealRepository } = await import('./meals/localStorageMealRepository')
+  return {
+    createDefaultPlanClient: () => createMemoryPlanClient({ repository: createLocalStorageMealRepository() }),
+  }
+})
+
 afterEach(() => {
   cleanup()
   window.localStorage.clear()
