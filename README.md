@@ -465,7 +465,6 @@ curl -b cookies.txt -X POST http://localhost:5173/api/meals -H 'Content-Type: ap
 
 - 表 `member_meals`: 記録。1行が1品（`migrations/0003_create_member_meals.sql`）。列は記録の項目（`meal_type` のように小文字とアンダースコアの名前）と、会員の ID の列 `user_id`（表 `user` の `id` への外部キー。会員が消えると、その会員の記録も消える `ON DELETE CASCADE`）
   - 主キーは `user_id` + `id`。日ごと・期間の取得用に、`user_id` + `date` の索引がある
-- 表 `meals`: 古い記録の表（Cloudflare Access のメールアドレスの列 `user_email` ごとの記録）。API は使わない。所有者が、書き出しと読み込みで記録を会員の記録へ移したことを確かめた後に、別の Issue で消す
 
 - 表 `user`、`session`、`account`、`verification`、`rateLimit`: 会員のログイン（Better Auth）が使う表（`migrations/0002_create_auth_tables.sql`）。形は、使っている版の Better Auth が期待するものに合わせている。パスワードは、ハッシュにして `account` に入る
 

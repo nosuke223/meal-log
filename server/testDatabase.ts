@@ -33,7 +33,7 @@ export async function startTestDatabase(options: TestDatabaseOptions = {}): Prom
     db,
     async reset() {
       // 会員の表は、会員（user）を参照する表から消す
-      for (const table of ['member_meals', 'meals', 'session', 'account', 'verification', 'rateLimit', 'user']) {
+      for (const table of ['member_meals','session', 'account', 'verification', 'rateLimit', 'user']) {
         await db.prepare(`DELETE FROM "${table}"`).run()
       }
     },
