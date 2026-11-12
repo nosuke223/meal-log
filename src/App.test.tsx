@@ -1,6 +1,7 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import App from './App'
+import { renderApp } from './renderApp'
 import { MEAL_STORAGE_KEY, createLocalStorageMealRepository } from './meals/localStorageMealRepository'
 import { MealStorageError, type MealRepository } from './meals/mealRepository'
 
@@ -22,8 +23,8 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-test('今日の日付と、朝・昼・夜・間食の4つの欄を表示する', () => {
-  render(<App today={TODAY} />)
+test('今日の日付と、朝・昼・夜・間食の4つの欄を表示する', async () => {
+  await renderApp(<App today={TODAY} />)
   expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
   for (const name of ['朝', '昼', '夜', '間食']) {
     expect(section(name)).toBeInTheDocument()
@@ -31,14 +32,14 @@ test('今日の日付と、朝・昼・夜・間食の4つの欄を表示する'
 })
 
 test('品名を入力して追加すると、その欄に品が表示され、品名の欄が空に戻る', async () => {
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   await addItem('朝', 'ごはん')
   expect(within(section('朝')).getByRole('textbox', { name: '新しい品名' })).toHaveValue('')
   expect(within(section('昼')).queryByRole('button', { name: /ごはん/ })).not.toBeInTheDocument()
 })
 
-test('品名が空白だけのとき、追加ボタンを押せない', () => {
-  render(<App today={TODAY} />)
+test('品名が空白だけのとき、追加ボタンを押せない', async () => {
+  await renderApp(<App today={TODAY} />)
   const target = section('朝')
   const button = within(target).getByRole('button', { name: '追加' })
   expect(button).toBeDisabled()
@@ -47,15 +48,15 @@ test('品名が空白だけのとき、追加ボタンを押せない', () => {
 })
 
 test('描画し直しても、追加した品が残っている', async () => {
-  const first = render(<App today={TODAY} />)
+  const first = await renderApp(<App today={TODAY} />)
   await addItem('昼', 'うどん')
   first.unmount()
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   expect(await within(section('昼')).findByRole('button', { name: /うどん/ })).toBeInTheDocument()
 })
 
-test('ジャンルと料理の分類を選べ、同じボタンをもう一度押すと未設定に戻る', () => {
-  render(<App today={TODAY} />)
+test('ジャンルと料理の分類を選べ、同じボタンをもう一度押すと未設定に戻る', async () => {
+  await renderApp(<App today={TODAY} />)
   const genre = within(within(section('朝')).getByRole('group', { name: 'ジャンル' }))
   const dish = within(within(section('朝')).getByRole('group', { name: '料理の分類' }))
   fireEvent.click(genre.getByRole('button', { name: '和' }))
@@ -69,7 +70,7 @@ test('ジャンルと料理の分類を選べ、同じボタンをもう一度�
 })
 
 test('同じ区分の次の品にはジャンルが引き継がれ、料理の分類と別の区分には引き継がれない', async () => {
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   const morning = section('朝')
   fireEvent.click(within(within(morning).getByRole('group', { name: 'ジャンル' })).getByRole('button', { name: '和' }))
   fireEvent.click(within(within(morning).getByRole('group', { name: '料理の分類' })).getByRole('button', { name: '主食' }))
@@ -89,7 +90,7 @@ test('同じ区分の次の品にはジャンルが引き継がれ、料理の�
 })
 
 test('品の内容と区分を変更でき、区分を変えると変更先の欄に移る', async () => {
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   await addItem('朝', 'ごはん')
   fireEvent.click(within(section('朝')).getByRole('button', { name: /ごはん/ }))
 
@@ -108,7 +109,7 @@ test('品の内容と区分を変更でき、区分を変えると変更先の�
 
 test('削除は確認の後に行い、取り消すと削除されない', async () => {
   const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   await addItem('夜', 'カレー')
 
   fireEvent.click(within(section('夜')).getByRole('button', { name: /カレー/ }))
@@ -127,7 +128,7 @@ test('削除は確認の後に行い、取り消すと削除されない', async
 test('今日を指定しないとき、日付をまたぐと表示と記録の対象日が翌日に変わる', async () => {
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
   vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
-  render(<App />)
+  await renderApp(<App />)
   expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
   await addItem('朝', 'ごはん')
 
@@ -153,7 +154,7 @@ test('今日を指定しないとき、日付をまたぐと表示と記録の�
 test('今日を指定しないとき、日付をまたいだ後の読み込みに失敗すると、エラーを表示し、前の日の品は表示しない', async () => {
   vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
   vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
-  render(<App />)
+  await renderApp(<App />)
   await addItem('朝', 'ごはん')
 
   vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
@@ -190,7 +191,7 @@ function seed(records: { id: string; date: string; mealType: string; name: strin
 
 describe('予定と食べた', () => {
   test('今日に追加した品は「予定」になり、1回のタップで「食べた」と「予定」を切り替えられる', async () => {
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await addItem('朝', 'ごはん')
     const morning = within(section('朝'))
     expect(morning.getByRole('button', { name: /ごはん/ })).toHaveTextContent('予定')
@@ -210,14 +211,14 @@ describe('予定と食べた', () => {
   })
 
   test('切り替えのボタンは、どの品のものかが分かる', async () => {
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await addItem('朝', 'ごはん')
     expect(within(section('朝')).getByRole('button', { name: '食べたにする' })).toHaveAccessibleDescription('ごはん')
   })
 
   test('過去の日に追加した品は「食べた」になり、切り替えのボタンがない', async () => {
     window.history.replaceState(null, '', '/#/day/2026-11-01')
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await addItem('昼', 'うどん')
     const lunch = within(section('昼'))
     expect(lunch.getByRole('button', { name: /うどん/ })).toHaveTextContent('食べた')
@@ -228,7 +229,7 @@ describe('予定と食べた', () => {
 
   test('明日以降の日に追加した品は「予定」になり、切り替えのボタンがない', async () => {
     window.history.replaceState(null, '', '/#/day/2026-11-07')
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await addItem('夜', '鍋')
     const dinner = within(section('夜'))
     expect(dinner.getByRole('button', { name: /鍋/ })).toHaveTextContent('予定')
@@ -254,7 +255,7 @@ describe('予定と食べた', () => {
       })
     }
 
-    const view = render(<App today={TODAY} />)
+    const view = await renderApp(<App today={TODAY} />)
     // 今日の「食べた」を未来へ、今日の「予定」を過去へ
     await changeDate('朝', 'ごはん', '2026-11-08')
     await changeDate('昼', 'うどん', '2026-11-02')
@@ -262,13 +263,13 @@ describe('予定と食べた', () => {
 
     // 過去の「食べた」を今日へ（そのまま「食べた」）
     window.history.replaceState(null, '', '/#/day/2026-11-03')
-    const past = render(<App today={TODAY} />)
+    const past = await renderApp(<App today={TODAY} />)
     await changeDate('夜', 'カレー', TODAY)
     past.unmount()
 
     // 未来の「予定」を今日へ（そのまま「予定」）
     window.history.replaceState(null, '', '/#/day/2026-11-10')
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await changeDate('夜', '鍋', TODAY)
 
     const byId = new Map(storedRecords().map((record) => [record.id, [record.date, record.status]]))
@@ -279,7 +280,7 @@ describe('予定と食べた', () => {
   })
 
   test('日付が空のときは、変更を保存できない', async () => {
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await addItem('朝', 'ごはん')
     fireEvent.click(within(section('朝')).getByRole('button', { name: /ごはん/ }))
     const form = within(within(section('朝')).getByRole('form', { name: '品の変更' }))
@@ -296,7 +297,7 @@ describe('日が過ぎた予定', () => {
       { id: 'today', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' },
       { id: 'future', date: '2026-11-07', mealType: 'lunch', name: 'うどん', status: 'planned' },
     ])
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await vi.waitFor(() => {
       expect(storedRecords().find((record) => record.id === 'past')?.status).toBe('eaten')
     })
@@ -309,14 +310,14 @@ describe('日が過ぎた予定', () => {
   test('過去の日の画面を開いたとき、日が過ぎた予定は「食べた」で表示される', async () => {
     seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
     window.history.replaceState(null, '', '/#/day/2026-11-05')
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     await vi.waitFor(() => {
       expect(within(section('夜')).getByRole('button', { name: /カレー/ })).toHaveTextContent('食べた')
     })
   })
 
   test('タブや画面に戻ってきたときにも、過去の日の「予定」を「食べた」にする', async () => {
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     // 開いた後に、別のタブなどで過去の日の予定が保存された
     seed([{ id: 'past', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'planned' }])
 
@@ -341,7 +342,7 @@ describe('日が過ぎた予定', () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
       throw new DOMException('quota', 'QuotaExceededError')
     })
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('日が過ぎた予定を「食べた」にできませんでした')
     expect(storedRecords()[0].status).toBe('planned')
 
@@ -361,14 +362,14 @@ describe('日が過ぎた予定', () => {
       throw new DOMException('quota', 'QuotaExceededError')
     })
     window.history.replaceState(null, '', '/#/calendar/2026-11')
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     expect(await screen.findByRole('alert')).toHaveTextContent('日が過ぎた予定を「食べた」にできませんでした')
   })
 
   test('今日を指定しないとき、日付をまたぐと、前の日の「予定」が「食べた」になる', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     vi.setSystemTime(new Date(2026, 10, 6, 23, 59, 40))
-    render(<App />)
+    await renderApp(<App />)
     await addItem('夜', 'カレー')
     expect(storedRecords().map((record) => record.status)).toEqual(['planned'])
 
@@ -435,7 +436,7 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
 
   test('追加: 保存できたことがわかるエラーを表示し、入力欄を空にする。次に読み直せたらエラーが消え、一覧が最新になる', async () => {
     const { repository, failReloadAfterNextSave } = setUpRepository()
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
     const lunch = within(section('昼'))
 
     failReloadAfterNextSave()
@@ -457,7 +458,7 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
   test('変更: 保存できたことがわかるエラーを表示し、変更の欄を閉じる', async () => {
     seed([{ id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' }])
     const { repository, failReloadAfterNextSave } = setUpRepository()
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
 
     const form = await openEditForm('朝', 'ごはん')
     fireEvent.change(form.getByRole('textbox', { name: '品名' }), { target: { value: 'おにぎり' } })
@@ -472,7 +473,7 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     seed([{ id: 'a', date: TODAY, mealType: 'dinner', name: 'カレー', status: 'planned' }])
     const { repository, failReloadAfterNextSave } = setUpRepository()
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
 
     const form = await openEditForm('夜', 'カレー')
     failReloadAfterNextSave()
@@ -485,7 +486,7 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
   test('予定と食べたの切り替え: 保存できたことがわかるエラーを表示する', async () => {
     seed([{ id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' }])
     const { repository, failReloadAfterNextSave } = setUpRepository()
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
 
     const button = await within(section('朝')).findByRole('button', { name: '食べたにする' })
     failReloadAfterNextSave()
@@ -497,7 +498,7 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
   test('追加の保存そのものに失敗したときは、「保存できませんでした」と表示し、入力中の品名を残す', async () => {
     const { repository } = setUpRepository()
     vi.spyOn(repository, 'create').mockRejectedValueOnce(new MealStorageError(RELOAD_ERROR))
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
     const lunch = within(section('昼'))
     fireEvent.change(lunch.getByRole('textbox', { name: '新しい品名' }), { target: { value: 'うどん' } })
     fireEvent.click(lunch.getByRole('button', { name: '追加' }))
@@ -513,7 +514,7 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
     seed([{ id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' }])
     const { repository } = setUpRepository()
     vi.spyOn(repository, 'update').mockRejectedValueOnce(new MealStorageError(RELOAD_ERROR))
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
 
     const form = await openEditForm('朝', 'ごはん')
     fireEvent.change(form.getByRole('textbox', { name: '品名' }), { target: { value: 'おにぎり' } })
@@ -529,7 +530,7 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
 describe('タブや画面に戻ってきたとき', () => {
   test('ほかで追加・削除した品が、読み込み直さずに一覧に反映され、入力中の品名と選んだジャンル・料理の分類は残る', async () => {
     seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' }])
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     const lunch = within(section('昼'))
     expect(await lunch.findByRole('button', { name: /うどん/ })).toBeInTheDocument()
 
@@ -567,7 +568,7 @@ describe('タブや画面に戻ってきたとき', () => {
       { id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' },
       { id: 'rice', date: TODAY, mealType: 'lunch', name: 'ごはん', status: 'planned' },
     ])
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     const lunch = within(section('昼'))
     fireEvent.click(await lunch.findByRole('button', { name: /うどん/ }))
     expect(lunch.getByRole('form', { name: '品の変更' })).toBeInTheDocument()
@@ -583,7 +584,7 @@ describe('タブや画面に戻ってきたとき', () => {
   })
 
   test('画面が隠れたとき（visibilitychange で hidden）は読み直さない', async () => {
-    render(<App today={TODAY} />)
+    await renderApp(<App today={TODAY} />)
     seed([{ id: 'soba', date: TODAY, mealType: 'lunch', name: 'そば', status: 'planned' }])
     vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
     act(() => {
@@ -628,7 +629,7 @@ describe('戻ってきたときの読み直しに失敗したとき', () => {
       { id: 'rice', date: TODAY, mealType: 'lunch', name: 'ごはん', status: 'planned' },
     ])
     const { repository, setOffline } = setUpOfflineRepository()
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
     const lunch = within(section('昼'))
     fireEvent.click(await lunch.findByRole('button', { name: /うどん/ }))
     const form = within(lunch.getByRole('form', { name: '品の変更' }))
@@ -654,7 +655,7 @@ describe('戻ってきたときの読み直しに失敗したとき', () => {
     seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'planned' }])
     const { repository, setOffline } = setUpOfflineRepository()
     window.history.replaceState(null, '', '/#/day/2026-11-06')
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
     expect(await within(section('昼')).findByRole('button', { name: /うどん/ })).toBeInTheDocument()
 
     setOffline(true)
@@ -672,7 +673,7 @@ describe('戻ってきたときの読み直しに失敗したとき', () => {
     seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'eaten' }])
     const { repository, setOffline } = setUpOfflineRepository()
     window.history.replaceState(null, '', '/#/calendar/2026-11-06')
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
     expect(await screen.findByText('うどん')).toBeInTheDocument()
     const dayButton = screen.getByRole('button', { name: /^11月6日 / })
     const label = dayButton.getAttribute('aria-label')
@@ -698,7 +699,7 @@ describe('戻ってきたときの読み直しに失敗したとき', () => {
     seed([{ id: 'udon', date: TODAY, mealType: 'lunch', name: 'うどん', status: 'eaten' }])
     const { repository, setOffline } = setUpOfflineRepository()
     window.history.replaceState(null, '', '/#/calendar/2026-11')
-    render(<App today={TODAY} repository={repository} />)
+    await renderApp(<App today={TODAY} repository={repository} />)
     expect(await screen.findByRole('button', { name: /^11月6日 .+/ })).toBeInTheDocument()
 
     setOffline(true)
@@ -715,14 +716,14 @@ test('保存先へのアクセスが拒否される環境でも、画面を表�
   vi.spyOn(window, 'localStorage', 'get').mockImplementation(() => {
     throw new DOMException('denied', 'SecurityError')
   })
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
   expect(await screen.findByRole('alert')).toHaveTextContent('記録を読み込めませんでした')
 })
 
 test('保存データが壊れているとき、エラーを表示し、データを上書きしない', async () => {
   window.localStorage.setItem(MEAL_STORAGE_KEY, '{broken')
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   expect(await screen.findByRole('alert')).toHaveTextContent('保存データが壊れています')
 
   const target = section('朝')

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AccountScreen } from './auth/AccountScreen'
-import type { AuthClient } from './auth/authClient'
+import { AUTH_MESSAGES, type AuthClient, type Member } from './auth/authClient'
 import { createDefaultAuthClient } from './auth/defaultAuthClient'
 import { ForgotScreen } from './auth/ForgotScreen'
 import { LoginScreen } from './auth/LoginScreen'
@@ -8,7 +8,7 @@ import { ResetScreen } from './auth/ResetScreen'
 import { SignupScreen } from './auth/SignupScreen'
 import { CalendarScreen } from './calendar/CalendarScreen'
 import { createDefaultMealRepository } from './meals/defaultMealRepository'
-import type { MealRepository } from './meals/mealRepository'
+import { LoginExpiredError, type MealRepository } from './meals/mealRepository'
 import { DataScreen } from './data/DataScreen'
 import {
   accountHash,
@@ -22,6 +22,7 @@ import {
   resetHash,
   signupHash,
   todayHash,
+  type Route,
 } from './route'
 import { DayScreen } from './today/DayScreen'
 import { useToday } from './useToday'
@@ -35,12 +36,64 @@ type Props = {
   today?: string
 }
 
+/**
+ * ログインの状態
+ *   unknown   まだ確かめていない（記録の画面を開くときに確かめる）
+ *   signedIn  ログイン中
+ *   signedOut ログインしていない。expired は、使っている途中でログインの期限が切れたか（ログインの画面に知らせを出す）
+ *   error     確かめられなかった
+ */
+type Session =
+  | { kind: 'unknown' }
+  | { kind: 'signedIn'; member: Member }
+  | { kind: 'signedOut'; expired: boolean }
+  | { kind: 'error'; message: string }
+
+/** ログインしていないと開けない画面（記録、カレンダー、データ） */
+function needsLogin(route: Route): boolean {
+  return route.screen === 'day' || route.screen === 'calendar' || route.screen === 'data'
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
+/** 保存の窓口を包み、ログインの期限が切れた（LoginExpiredError）ときに onExpired を呼ぶ（エラーはそのまま投げる） */
+function watchLoginExpiry(repository: MealRepository, onExpired: () => void): MealRepository {
+  function watch<A extends unknown[], R>(operation: (...args: A) => Promise<R>) {
+    return async (...args: A): Promise<R> => {
+      try {
+        return await operation(...args)
+      } catch (error) {
+        if (error instanceof LoginExpiredError) onExpired()
+        throw error
+      }
+    }
+  }
+  return {
+    listByDate: watch((date) => repository.listByDate(date)),
+    listByDateRange: watch((from, to) => repository.listByDateRange(from, to)),
+    get: watch((id) => repository.get(id)),
+    create: watch((input) => repository.create(input)),
+    update: watch((id, changes) => repository.update(id, changes)),
+    delete: watch((id) => repository.delete(id)),
+    markPlannedAsEatenBefore: watch((date) => repository.markPlannedAsEatenBefore(date)),
+    listAll: watch(() => repository.listAll()),
+    importRecords: watch((records) => repository.importRecords(records)),
+  }
+}
+
 function App({ repository, authClient: givenAuthClient, today: fixedToday }: Props) {
-  const [mealRepository] = useState(() => repository ?? createDefaultMealRepository())
+  const [session, setSession] = useState<Session>({ kind: 'unknown' })
+  // 日が過ぎた予定を「食べた」にできなかったときのエラー
+  const [autoUpdateError, setAutoUpdateError] = useState<string | null>(null)
+  // ログインの期限が切れたら、ログインしていない状態にする（記録の画面なら、下でログインの画面に移る）
+  const [mealRepository] = useState(() =>
+    watchLoginExpiry(repository ?? createDefaultMealRepository(), () => {
+      setSession((current) => (current.kind === 'signedIn' ? { kind: 'signedOut', expired: true } : current))
+      setAutoUpdateError(null)
+    }),
+  )
   const [authClient] = useState(() => givenAuthClient ?? createDefaultAuthClient())
   const today = useToday(fixedToday)
   const [hash, setHash] = useState(() => window.location.hash)
@@ -48,12 +101,14 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
   const [resetToken, setResetToken] = useState<string | null>(null)
   // 日が過ぎた予定を「食べた」にしたときと、タブや画面に戻ってきたときに上げて、画面に読み直させる
   const [revision, setRevision] = useState(0)
-  // 日が過ぎた予定を「食べた」にできなかったときのエラー
-  const [autoUpdateError, setAutoUpdateError] = useState<string | null>(null)
 
-  // アプリを開いたとき、日付をまたいだとき、タブや画面に戻ってきたときに、過去の日の「予定」を「食べた」にする。
+  // ログイン中の会員（会員が変わったら、画面の状態を初めからにする）
+  const memberKey = session.kind === 'signedIn' ? session.member.email : null
+
+  // ログインした後（アプリを開いたとき、日付をまたいだとき、タブや画面に戻ってきたとき）に、過去の日の「予定」を「食べた」にする。
   // タブや画面に戻ってきたときは、別の端末で記録が変わっているかもしれないので、更新が0件でも画面に読み直させる
   useEffect(() => {
+    if (memberKey === null) return
     let cancelled = false
     function completePastPlans(reload: boolean) {
       mealRepository
@@ -75,11 +130,30 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
           if (reload) setRevision((value) => value + 1)
         })
     }
+    // タブや画面に戻ってきたときは、まずログイン中の会員を確かめ直す（別のタブでログアウトしたり、別の会員でログインしたりしているかもしれない）。
+    // 会員が変わっていたら、前の会員の画面の状態（取り込む前の確認なども）を残さないよう、その会員の画面にする（ログアウトしていたら、ログインの画面に移る）。
+    // 確かめられなかったときは、今までどおり読み直す（ログインが切れていれば、読み直しの 401 でログインの画面に移る）
+    function onReturn() {
+      authClient.getSession().then(
+        (member) => {
+          if (cancelled) return
+          if (member?.email === memberKey) {
+            completePastPlans(true)
+            return
+          }
+          setSession(member === null ? { kind: 'signedOut', expired: true } : { kind: 'signedIn', member })
+          setAutoUpdateError(null)
+        },
+        () => {
+          if (!cancelled) completePastPlans(true)
+        },
+      )
+    }
     function onVisibilityChange() {
-      if (document.visibilityState === 'visible') completePastPlans(true)
+      if (document.visibilityState === 'visible') onReturn()
     }
     function onFocus() {
-      completePastPlans(true)
+      onReturn()
     }
     completePastPlans(false)
     document.addEventListener('visibilitychange', onVisibilityChange)
@@ -89,7 +163,7 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('focus', onFocus)
     }
-  }, [mealRepository, today])
+  }, [mealRepository, authClient, today, memberKey])
 
   // ブラウザの「戻る」「進む」や、アドレスの書き換えに合わせる
   useEffect(() => {
@@ -137,8 +211,63 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     }
   })
 
+  // ログインしていないと開けない画面を開いたときに、まだ確かめていなければ、ログインしているかを確かめる
+  const checkSession = needsLogin(route) && session.kind === 'unknown'
+  useEffect(() => {
+    if (!checkSession) return
+    let cancelled = false
+    authClient
+      .getSession()
+      .then((member) => {
+        if (!cancelled) setSession(member === null ? { kind: 'signedOut', expired: false } : { kind: 'signedIn', member })
+      })
+      .catch((cause: unknown) => {
+        if (!cancelled) setSession({ kind: 'error', message: `${AUTH_MESSAGES.sessionCheckFailed}: ${messageOf(cause)}` })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [checkSession, authClient])
+
+  /** ログインしたとき（前の会員の画面の状態は持ち越さない）。今日の記録の画面に移る */
+  function signedIn(member: Member) {
+    setSession({ kind: 'signedIn', member })
+    setAutoUpdateError(null)
+    navigate(todayHash())
+  }
+
+  // ログインしていないときに、記録、カレンダー、データの画面を開いたら、ログインの画面に移る（履歴は増やさない）。
+  // 使っている途中でログインの期限が切れたときは、その旨を出す（出すのは1回だけ）
+  if (needsLogin(route) && session.kind === 'signedOut') {
+    setHash(loginHash(session.expired ? 'session-expired' : undefined))
+    if (session.expired) setSession({ kind: 'signedOut', expired: false })
+  }
+
+  if (needsLogin(route) && session.kind !== 'signedIn') {
+    return (
+      <main className="screen">
+        {session.kind === 'error' ? (
+          <section className="section">
+            <p role="alert" className="error">
+              {session.message}
+            </p>
+            <button type="button" onClick={() => setSession({ kind: 'unknown' })}>
+              もう一度試す
+            </button>
+          </section>
+        ) : (
+          <p role="status" className="description">
+            ログインの状態を確かめています…
+          </p>
+        )}
+      </main>
+    )
+  }
+
   if (route.screen === 'data') {
-    return <DataScreen repository={mealRepository} today={today} onBack={() => navigate(todayHash())} />
+    return (
+      <DataScreen key={memberKey} repository={mealRepository} today={today} onBack={() => navigate(todayHash())} />
+    )
   }
 
   // ログインの画面は、ログインしたら今日の記録の画面に移る
@@ -153,7 +282,7 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
         // 確認のメールのリンクの結果が変わったら、入力と表示を初めからにする
         key={route.notice ?? ''}
         notice={route.notice}
-        onSignedIn={() => navigate(todayHash())}
+        onSignedIn={signedIn}
         onOpenSignup={() => navigate(signupHash())}
         onOpenForgot={() => navigate(forgotHash())}
       />
@@ -185,7 +314,12 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     return (
       <AccountScreen
         {...authScreenProps}
-        onSignedIn={() => navigate(todayHash())}
+        onSignedIn={signedIn}
+        // ログアウトしたら、その会員の記録を画面に残さない（記録の画面を開くと、ログインの画面に移る）
+        onSignedOut={() => {
+          setSession({ kind: 'signedOut', expired: false })
+          setAutoUpdateError(null)
+        }}
         onOpenSignup={() => navigate(signupHash())}
         onOpenForgot={() => navigate(forgotHash())}
       />
@@ -195,6 +329,7 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
   if (route.screen === 'calendar') {
     return (
       <CalendarScreen
+        key={memberKey}
         repository={mealRepository}
         today={today}
         month={route.month}
@@ -214,8 +349,9 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
   const date = route.date ?? today
   return (
     <DayScreen
-      // 日を移ったら、入力中の品名や選んだジャンルを持ち越さない（今日の画面は日付をまたいでも持ち越す）
-      key={route.date ?? 'today'}
+      // 日を移ったら、入力中の品名や選んだジャンルを持ち越さない（今日の画面は日付をまたいでも持ち越す）。
+      // 会員が変わったときも持ち越さない
+      key={`${memberKey}:${route.date ?? 'today'}`}
       repository={mealRepository}
       date={date}
       today={today}

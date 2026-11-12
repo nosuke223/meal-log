@@ -135,7 +135,9 @@ test('通信に失敗したとき、エラーが表示され、記録は消え�
   await addItem(page, '朝', 'ごはん')
   const saved = await api.records()
 
-  await page.route('**/api/**', (route) => route.abort('internetdisconnected'))
+  // 記録の API への通信を失敗させる（ログインの API は通す。開き直したときのログインの確かめは、下で別に試す）
+  const recordApi = (url: URL) => url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/auth/')
+  await page.route(recordApi, (route) => route.abort('internetdisconnected'))
   const morning = section(page, '朝')
   await morning.getByRole('textbox', { name: '新しい品名' }).fill('パン')
   await morning.getByRole('button', { name: '追加', exact: true }).click()
@@ -149,6 +151,14 @@ test('通信に失敗したとき、エラーが表示され、記録は消え�
   await expect(page.getByRole('alert').filter({ hasText: '記録を読み込めませんでした' })).toContainText(
     'サーバーに接続できませんでした',
   )
+  await page.unroute(recordApi)
+
+  // ログインの API にもつながらないときは、開き直すと、ログインの状態を確かめられなかったことが出る
+  await page.route('**/api/**', (route) => route.abort('internetdisconnected'))
+  await page.reload()
+  await expect(page.getByRole('alert').filter({ hasText: 'ログインの状態を確かめられませんでした' })).toContainText(
+    'サーバーに接続できませんでした',
+  )
 
   await page.unroute('**/api/**')
   await page.reload()
@@ -157,7 +167,7 @@ test('通信に失敗したとき、エラーが表示され、記録は消え�
   expect(await api.records()).toEqual(saved)
 })
 
-test('ログインの期限が切れたとき（401、ログイン画面への転送）、読み込み直しを促すエラーが表示され、記録は消えない', async ({
+test('ログインの期限が切れたとき（401、ログイン画面への転送）、ログインの画面に移って期限切れの文言が出て、記録は消えない', async ({
   page,
   api,
 }) => {
@@ -166,7 +176,7 @@ test('ログインの期限が切れたとき（401、ログイン画面への�
 
   const expired = [
     { status: 401, contentType: 'application/json', body: JSON.stringify({ error: { type: 'Unauthorized', message: '' } }) },
-    // Cloudflare Access は、ログインの期限が切れると、ログイン画面（別のオリジン）へ転送する
+    // 公開の前は、サイト全体を Cloudflare Access が守っている。Access は、ログインの期限が切れると、ログイン画面（別のオリジン）へ転送する
     { status: 302, headers: { Location: 'https://meal-log.cloudflareaccess.com/cdn-cgi/access/login/meal-log' } },
   ]
   for (const response of expired) {
@@ -175,12 +185,13 @@ test('ログインの期限が切れたとき（401、ログイン画面への�
     await morning.getByRole('button', { name: /ごはん/ }).click()
     await morning.getByRole('form', { name: '品の変更' }).getByRole('textbox', { name: '品名' }).fill('おにぎり')
     await morning.getByRole('form', { name: '品の変更' }).getByRole('button', { name: '保存' }).click()
-    await expect(page.getByRole('alert').filter({ hasText: '保存できませんでした' })).toContainText(
-      'ログインの期限が切れました。ページを読み込み直してください',
-    )
+    await expect(page).toHaveURL(/#\/login\/session-expired$/)
+    await expect(page.getByRole('alert')).toHaveText('ログインの期限が切れました。ログインし直してください')
 
+    // ここではセッションはまだ使えるので、開き直すと、記録の画面が出る
     await page.unroute('**/api/**')
-    await page.reload()
+    await page.goto('about:blank')
+    await page.goto('/')
     await expect(section(page, '朝').getByRole('button', { name: /ごはん/ })).toBeVisible()
     expect(await api.records()).toEqual(saved)
   }

@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { createApiMealRepository } from '../src/meals/apiMealRepository'
+import { createApiMealRepository, LOGIN_EXPIRED_MESSAGE } from '../src/meals/apiMealRepository'
 import { MealValidationError, type MealRecord } from '../src/meals/mealRecord'
-import { MealNotFoundError, type MealRepository } from '../src/meals/mealRepository'
-import { createApiHandler, type ApiEnv } from './api'
+import { LoginExpiredError, MealNotFoundError, type MealRepository } from '../src/meals/mealRepository'
+import { createApiHandler } from './api'
+import { createMemoryTransport } from './mail/mailer'
 import { startTestDatabase, type TestDatabase } from './testDatabase'
+import { createTestMember, signInTestMember, testEnv, type TestMember } from './testMember'
 
 // 画面が使う窓口のサーバー版（src/meals/apiMealRepository.ts）を、実際の API（server/api.ts）と手元の D1 につないで確かめる
 
@@ -31,11 +33,22 @@ function createClock(start = '2026-11-06T00:00:00.000Z') {
   }
 }
 
-/** API の処理を直接呼ぶ fetch で、この人（DEV_USER_EMAIL）の窓口を作る */
-function repositoryAs(email: string, handle = createApiHandler({ now: createClock() })): MealRepository {
-  const env: ApiEnv = { DB: database.db, DEV_USER_EMAIL: email }
-  const fetch: typeof globalThis.fetch = async (input, init) =>
-    handle(new Request(new URL(String(input), 'https://meal-log.example'), init), env)
+const authHandle = createApiHandler({ mailTransport: createMemoryTransport() })
+
+/** 会員登録してログインする */
+function signUp(email: string): Promise<TestMember> {
+  return createTestMember(authHandle, database.db, email)
+}
+
+/**
+ * API の処理を直接呼ぶ fetch で、この会員の窓口を作る（ブラウザと同じく、ログインの cookie を付けて呼ぶ）
+ */
+function repositoryAs(member: TestMember, handle = createApiHandler({ now: createClock() })): MealRepository {
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    const headers = new Headers(init?.headers)
+    headers.set('Cookie', member.cookie)
+    return handle(new Request(new URL(String(input), 'https://meal-log.example'), { ...init, headers }), testEnv(database.db))
+  }
   return createApiMealRepository({ fetch })
 }
 
@@ -53,7 +66,7 @@ const IMPORTED: MealRecord = {
 
 describe('サーバー版の窓口', () => {
   it('作成した記録を、日ごと・期間・すべて・1件で取得できる', async () => {
-    const repository = repositoryAs('alice@example.com')
+    const repository = repositoryAs(await signUp('alice@example.com'))
     const lunch = await repository.create({ date: '2026-11-06', mealType: 'lunch', name: ' うどん ', genre: 'japanese', status: 'eaten' })
     const breakfast = await repository.create({ date: '2026-11-06', mealType: 'breakfast', name: 'パン', status: 'planned' })
     const other = await repository.create({ date: '2026-11-20', mealType: 'dinner', name: '鍋', status: 'planned' })
@@ -67,7 +80,7 @@ describe('サーバー版の窓口', () => {
   })
 
   it('更新・削除でき、ない ID では MealNotFoundError', async () => {
-    const repository = repositoryAs('alice@example.com')
+    const repository = repositoryAs(await signUp('alice@example.com'))
     const created = await repository.create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', genre: 'japanese', status: 'planned' })
 
     const updated = await repository.update(created.id, { name: 'そば', genre: null, status: 'eaten' })
@@ -82,7 +95,7 @@ describe('サーバー版の窓口', () => {
   })
 
   it('不正な値は MealValidationError で、何も保存しない', async () => {
-    const repository = repositoryAs('alice@example.com')
+    const repository = repositoryAs(await signUp('alice@example.com'))
     await expect(repository.create({ date: '2026-11-06', mealType: 'lunch', name: '  ', status: 'eaten' })).rejects.toBeInstanceOf(
       MealValidationError,
     )
@@ -94,7 +107,7 @@ describe('サーバー版の窓口', () => {
   })
 
   it('渡した日より前の日の予定を「食べた」にする', async () => {
-    const repository = repositoryAs('alice@example.com')
+    const repository = repositoryAs(await signUp('alice@example.com'))
     const past = await repository.create({ date: '2026-11-05', mealType: 'dinner', name: '焼き魚', status: 'planned' })
     const today = await repository.create({ date: '2026-11-06', mealType: 'dinner', name: '鍋', status: 'planned' })
 
@@ -106,7 +119,7 @@ describe('サーバー版の窓口', () => {
   })
 
   it('書き出した記録を、ID と日時を保ったまま取り込める（「.」などを含む ID も扱える）', async () => {
-    const repository = repositoryAs('alice@example.com')
+    const repository = repositoryAs(await signUp('alice@example.com'))
     await repository.importRecords([IMPORTED])
     expect(await repository.listAll()).toEqual([IMPORTED])
     expect(await repository.get(IMPORTED.id)).toEqual(IMPORTED)
@@ -117,9 +130,32 @@ describe('サーバー版の窓口', () => {
     expect(await repository.get(IMPORTED.id)).toBeNull()
   })
 
-  it('同じ人なら、別の窓口（別のブラウザ）でも同じ記録が見え、別の人には見えない', async () => {
-    const created = await repositoryAs('alice@example.com').create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', status: 'eaten' })
-    expect(await repositoryAs('Alice@Example.com').listAll()).toEqual([created])
-    expect(await repositoryAs('bob@example.com').listAll()).toEqual([])
+  it('同じ会員なら、別の窓口（別のブラウザでログイン）でも同じ記録が見え、別の会員には見えない', async () => {
+    const alice = await signUp('alice@example.com')
+    const bob = await signUp('bob@example.com')
+    const created = await repositoryAs(alice).create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', status: 'eaten' })
+    const otherBrowser = await signInTestMember(authHandle, database.db, 'Alice@Example.com')
+    expect(await repositoryAs(otherBrowser).listAll()).toEqual([created])
+    expect(await repositoryAs(bob).listAll()).toEqual([])
+  })
+
+  it('書き出した記録を、別の会員のアカウントで読み込める（書き出しのファイルの記録の形のまま）', async () => {
+    const alice = repositoryAs(await signUp('alice@example.com'))
+    const bob = repositoryAs(await signUp('bob@example.com'))
+    await alice.importRecords([IMPORTED])
+    const created = await alice.create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', status: 'eaten' })
+
+    const exported = await alice.listAll()
+    await bob.importRecords(exported)
+    expect(await bob.listAll()).toEqual(exported)
+    // 読み込んだ側で変えても、書き出した側の記録は変わらない
+    await bob.delete(created.id)
+    expect(await alice.listAll()).toEqual(exported)
+  })
+
+  it('ログインの期限が切れたとき（401）は、ログインし直しを促す LoginExpiredError', async () => {
+    const repository = repositoryAs({ id: 'none', email: 'none@example.com', cookie: 'better-auth.session_token=broken' })
+    await expect(repository.listAll()).rejects.toBeInstanceOf(LoginExpiredError)
+    await expect(repository.listAll()).rejects.toThrow(LOGIN_EXPIRED_MESSAGE)
   })
 })

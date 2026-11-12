@@ -72,11 +72,14 @@ export function isEmailVerificationResult(value: unknown): value is EmailVerific
   return (EMAIL_VERIFICATION_RESULTS as readonly unknown[]).includes(value)
 }
 
-/** ログインの画面（#/login/<結果>）に出す結果。確認のメールのリンクの結果と、パスワードを再設定した結果（password-reset） */
-export type LoginNotice = EmailVerificationResult | 'password-reset'
+/**
+ * ログインの画面（#/login/<結果>）に出す結果。確認のメールのリンクの結果と、パスワードを再設定した結果（password-reset）と、
+ * 使っている途中でログインの期限が切れた（記録の API が 401 を返した）こと（session-expired）
+ */
+export type LoginNotice = EmailVerificationResult | 'password-reset' | 'session-expired'
 
 export function isLoginNotice(value: unknown): value is LoginNotice {
-  return value === 'password-reset' || isEmailVerificationResult(value)
+  return value === 'password-reset' || value === 'session-expired' || isEmailVerificationResult(value)
 }
 
 /** パスワードの最短の文字数（サーバーの server/memberAuth.ts と同じ） */
@@ -105,6 +108,8 @@ export const AUTH_MESSAGES = {
   emptyPassword: '新しいパスワードを入力してください',
   connectionFailed: 'サーバーに接続できませんでした。通信の状態を確かめてください',
   loginExpired: 'ログインの期限が切れました。ページを読み込み直してください',
+  sessionExpired: 'ログインの期限が切れました。ログインし直してください',
+  sessionCheckFailed: 'ログインの状態を確かめられませんでした',
   forbidden: 'このページからは受け付けられませんでした。ページを読み込み直してください',
 } as const
 

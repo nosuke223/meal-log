@@ -1,15 +1,21 @@
-// 保存の窓口（MealRepository）の全操作に対応する API。Pages Functions（functions/api/[[path]].ts）から呼ぶ
+// 保存の窓口（MealRepository）の全操作に対応する API。Pages Functions（functions/api/[[path]].ts）から呼ぶ。
+// 記録の API は、cookie のセッション（会員のログイン）で本人を確かめ、その会員の記録だけを読み書きする
 
 import { MealValidationError, type MealChanges, type MealInput } from '../src/meals/mealRecord'
 import { MealNotFoundError, MealStorageError, type MealRepository } from '../src/meals/mealRepository'
-import { AuthConfigurationError, createAuthenticator, type AuthEnv } from './auth'
 import type { D1Database } from './d1'
 import { createD1MealRepository } from './d1MealRepository'
 import type { MailTransport } from './mail/mailer'
-import { createMemberAuthHandler, isAuthPath, type MemberAuthEnv } from './memberAuth'
+import {
+  AuthConfigurationError,
+  createMemberAuth,
+  isAuthPath,
+  type AuthenticatedMember,
+  type MemberAuthEnv,
+} from './memberAuth'
 import { applyMigrations, appliedMigrationNames, type Migration } from './migrate'
 
-export type ApiEnv = AuthEnv & MemberAuthEnv & {
+export type ApiEnv = MemberAuthEnv & {
   /** つながっていない環境（Pages の設定で D1 をつないでいないとき）では無い */
   DB?: D1Database
 }
@@ -19,8 +25,6 @@ export type ApiOptions = {
   now?: () => Date
   /** ID を作る。テストで差し替える */
   generateId?: () => string
-  /** Access の公開鍵の取得に使う。テストで差し替える */
-  fetch?: typeof fetch
   /** 当てるマイグレーション。テストで差し替える（既定は migrations/ のすべて） */
   migrations?: readonly Migration[]
   /** メールを送る部分。省略すると Resend の API で送る。テストと手元の開発サーバーで差し替える */
@@ -33,6 +37,7 @@ export type ApiErrorType =
   | 'MealNotFoundError'
   | 'MealStorageError'
   | 'Unauthorized'
+  | 'Forbidden'
   | 'AuthConfigurationError'
   | 'RouteNotFound'
   | 'MethodNotAllowed'
@@ -77,8 +82,7 @@ type RouteContext = {
 
 /** API のリクエストを処理する関数を作る */
 export function createApiHandler(options: ApiOptions = {}) {
-  const authenticate = createAuthenticator({ fetch: options.fetch, now: options.now })
-  const handleMemberAuth = createMemberAuthHandler({ mailTransport: options.mailTransport })
+  const memberAuth = createMemberAuth({ mailTransport: options.mailTransport })
   const migrations = options.migrations
   // マイグレーションを当て終えたか（当てている途中なら、その処理）。この実行環境で最初のリクエストのときだけ当て、
   // 失敗したら覚えず、次のリクエストでやり直す
@@ -104,25 +108,14 @@ export function createApiHandler(options: ApiOptions = {}) {
 
       const url = new URL(request.url)
       if (routeName(url.pathname) === 'health') return await handleHealth(request, db)
-      // 会員の登録とログイン。Access を外した公開の後も動くよう、Access の確かめより前に処理する
+      // 会員の登録とログイン（ログインしていなくても使う）
       if (isAuthPath(url.pathname)) {
-        try {
-          return await handleMemberAuth(request, env, db)
-        } catch (error) {
-          if (error instanceof AuthConfigurationError) throw new HttpError(500, 'AuthConfigurationError', error.message)
-          throw error
-        }
+        return await withAuthConfiguration(() => memberAuth.handleAuthRequest(request, env, db))
       }
 
-      let email: string | null
-      try {
-        email = await authenticate(request, env)
-      } catch (error) {
-        if (error instanceof AuthConfigurationError) throw new HttpError(500, 'AuthConfigurationError', error.message)
-        const reason = error instanceof Error ? error.message : String(error)
-        throw new HttpError(500, 'AuthConfigurationError', `認証を確かめられません（${reason}）`)
-      }
-      if (email === null) throw new HttpError(401, 'Unauthorized', 'ログインしていないか、ログインの情報が正しくありません')
+      // 記録の API は、ログインした会員だけが使える（cookie のセッションで確かめる）
+      const member: AuthenticatedMember | null = await withAuthConfiguration(() => memberAuth.getMember(request, env, db))
+      if (member === null) throw new HttpError(401, 'Unauthorized', 'ログインしていないか、ログインの期限が切れています')
 
       const route = matchRoute(url.pathname)
       const handler = route.methods[request.method]
@@ -130,14 +123,31 @@ export function createApiHandler(options: ApiOptions = {}) {
         const allow = Object.keys(route.methods).join(', ')
         throw new HttpError(405, 'MethodNotAllowed', `この操作には対応していません: ${request.method}`, { Allow: allow })
       }
-      if (WRITE_METHODS.includes(request.method) && !isJsonRequest(request)) {
-        throw new HttpError(415, 'UnsupportedMediaType', '書き込みのリクエストは Content-Type: application/json にしてください')
+      if (WRITE_METHODS.includes(request.method)) {
+        // cookie で認証するので、他のオリジンの画面からの書き込みは受け付けない
+        const requestOrigin = request.headers.get('Origin')
+        if (requestOrigin !== null && requestOrigin !== url.origin) {
+          throw new HttpError(403, 'Forbidden', '他のオリジンからの書き込みは受け付けません')
+        }
+        if (!isJsonRequest(request)) {
+          throw new HttpError(415, 'UnsupportedMediaType', '書き込みのリクエストは Content-Type: application/json にしてください')
+        }
       }
-      const repository = createD1MealRepository(db, email, options)
+      const repository = createD1MealRepository(db, member.id, options)
       return await handler({ repository, url, request })
     } catch (error) {
       return errorResponse(error)
     }
+  }
+}
+
+/** 秘密の値がないときのエラー（AuthConfigurationError）を、500 の応答にする */
+async function withAuthConfiguration<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    if (error instanceof AuthConfigurationError) throw new HttpError(500, 'AuthConfigurationError', error.message)
+    throw error
   }
 }
 

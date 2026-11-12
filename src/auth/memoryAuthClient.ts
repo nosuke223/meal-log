@@ -16,12 +16,21 @@ export type MemoryMail = {
   token?: string
 }
 
+export type MemoryAuthClientOptions = {
+  /** 登録・確認済みで、ログインした状態から始める会員のメールアドレス（パスワードは password） */
+  signedInAs?: string
+  password?: string
+}
+
+/** signedInAs の会員の、既定のパスワード */
+export const MEMORY_MEMBER_PASSWORD = 'member-password'
+
 /**
  * メモリーの中だけで動くログインの窓口（画面のテスト用。アプリでは使わない）。
  * サーバーと同じく、メールアドレスは小文字にそろえ、パスワードは8文字以上にする。
  * 登録しても、メールアドレスを確認する（verify）までログインできない
  */
-export function createMemoryAuthClient(): AuthClient & {
+export function createMemoryAuthClient(options: MemoryAuthClientOptions = {}): AuthClient & {
   /** 次の呼び出しを、このエラーで失敗させる（回数の上限や通信の失敗の表示を確かめる） */
   failNext(error: Error): void
   /** メールアドレスを確認済みにする（確認のメールのリンクを開いたときの代わり） */
@@ -38,6 +47,11 @@ export function createMemoryAuthClient(): AuthClient & {
   let tokenCount = 0
   let current: Member | null = null
   let nextError: Error | null = null
+  if (options.signedInAs !== undefined) {
+    const email = options.signedInAs.trim().toLowerCase()
+    members.set(email, { password: options.password ?? MEMORY_MEMBER_PASSWORD, verified: true })
+    current = { email }
+  }
 
   function takeError() {
     const error = nextError

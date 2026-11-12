@@ -54,10 +54,16 @@ type DbHooks = {
   onBatch?: () => void
 }
 
-/** 記録の読み書きを見張る D1。batch には D1 の文のまま渡す必要があるので、記録を読む文だけを包む */
+type ExecutableD1 = D1Database & { exec(query: string): Promise<unknown> }
+
+/**
+ * 記録の読み書きを見張る D1。batch には D1 の文のまま渡す必要があるので、記録を読む文だけを包む。
+ * Better Auth は prepare、batch、exec があるものを D1 と見分ける（exec がないと初期化に失敗する）ので、exec も渡す
+ */
 function watchedDb(hooks: DbHooks): D1Database {
-  const db = database.db
-  return {
+  const db = database.db as ExecutableD1
+  const watched: ExecutableD1 = {
+    exec: (query) => db.exec(query),
     prepare(query) {
       const statement = db.prepare(query)
       if (query.includes('d1_migrations')) hooks.onMigrationQuery?.(query)
@@ -79,15 +85,16 @@ function watchedDb(hooks: DbHooks): D1Database {
       return db.batch(statements)
     },
   }
+  return watched
 }
 
 describe('マイグレーションを当てる処理', () => {
-  it('空の D1 に全部を当てられ、meals の表ができて、記録が残る', async () => {
+  it('空の D1 に全部を当てられ、記録の表（member_meals）ができて、記録が残る', async () => {
     await applyMigrations(database.db)
 
-    expect(await tableNames()).toContain('meals')
+    expect(await tableNames()).toContain('member_meals')
     expect(await appliedMigrationNames(database.db)).toEqual(MIGRATIONS.map((migration) => migration.name))
-    expect(MIGRATIONS.map((migration) => migration.name)).toContain('0001_create_meals.sql')
+    expect(MIGRATIONS.map((migration) => migration.name)).toContain('0003_create_member_meals.sql')
   })
 
   it('番号順に当てる（渡した順によらない）', async () => {
@@ -144,15 +151,14 @@ describe('マイグレーションを当てる処理', () => {
   })
 })
 
-const TEAM = 'meal-log-team'
-const AUD = 'secret-aud-tag'
+const SECRET = 'test-only-better-auth-secret-for-migrations'
 
-/** Access の設定はあるが、JWT を付けないリクエストを送る */
+/** ログインの設定はあるが、ログインの cookie を付けないリクエストを送る */
 function createClient(options: Parameters<typeof createApiHandler>[0] = {}) {
-  const handle = createApiHandler({ fetch: () => Promise.reject(new Error('公開鍵は取りに行かない')), ...options })
+  const handle = createApiHandler(options)
   return async function call(method: string, path: string, env: Partial<ApiEnv> = {}) {
     const request = new Request(`https://meal-log.example${path}`, { method })
-    const response = await handle(request, { DB: database.db, ACCESS_TEAM_NAME: TEAM, ACCESS_AUD: AUD, ...env })
+    const response = await handle(request, { DB: database.db, BETTER_AUTH_SECRET: SECRET, ...env })
     const text = await response.text()
     return { status: response.status, headers: response.headers, text, body: text === '' ? null : JSON.parse(text) }
   }
@@ -165,7 +171,7 @@ describe('API の入口で当てる', () => {
 
     expect(response.status).toBe(401)
     expect(response.body.error.type).toBe('Unauthorized')
-    expect(await tableNames()).toContain('meals')
+    expect(await tableNames()).toContain('member_meals')
     expect(await appliedMigrationNames(database.db)).toEqual(MIGRATIONS.map((migration) => migration.name))
   })
 
@@ -219,8 +225,7 @@ describe('GET /api/health', () => {
     expect(response.body).toEqual({ migrations: MIGRATIONS.map((migration) => migration.name) })
     expect(response.body.migrations).toContain('0001_create_meals.sql')
     expect(response.headers.get('Cache-Control')).toBe('no-store')
-    expect(response.text).not.toContain(TEAM)
-    expect(response.text).not.toContain(AUD)
+    expect(response.text).not.toContain(SECRET)
   })
 
   it.each(['POST', 'PUT', 'PATCH', 'DELETE'])('%s は 405（Allow: GET）', async (method) => {

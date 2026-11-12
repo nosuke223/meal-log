@@ -33,12 +33,27 @@ export async function startTestDatabase(options: TestDatabaseOptions = {}): Prom
     db,
     async reset() {
       // 会員の表は、会員（user）を参照する表から消す
-      for (const table of ['meals', 'session', 'account', 'verification', 'rateLimit', 'user']) {
+      for (const table of ['member_meals', 'meals', 'session', 'account', 'verification', 'rateLimit', 'user']) {
         await db.prepare(`DELETE FROM "${table}"`).run()
       }
     },
     dispose: () => proxy.dispose(),
   }
+}
+
+/**
+ * 一部の操作を差し替えた D1（割り込みや失敗を起こすテスト用）。差し替えない操作は、本物の D1 のものを使う。
+ * ログインの仕組み（Better Auth）は exec のあるものを D1 と見分けるので、exec も本物のものを渡す
+ */
+export function overrideDatabase(db: D1Database, overrides: Partial<D1Database>): D1Database {
+  const real = db as D1Database & { exec(query: string): Promise<unknown> }
+  const database = {
+    prepare: (query: string) => real.prepare(query),
+    batch: <T>(statements: Parameters<D1Database['batch']>[0]) => real.batch<T>(statements),
+    exec: (query: string) => real.exec(query),
+    ...overrides,
+  }
+  return database as D1Database
 }
 
 /** 表をすべて消し、空の D1 に戻す（D1 が中で使う表は残す）。ほかの表から参照される表は後に消すよう、作った順の逆に消す */

@@ -1,6 +1,7 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import App from '../App'
+import { renderApp } from '../renderApp'
 import { MEAL_STORAGE_KEY } from '../meals/localStorageMealRepository'
 import type { MealRecord } from '../meals/mealRecord'
 
@@ -34,9 +35,9 @@ function fileOf(content: unknown, name = 'meal-log-2026-11-06.json'): File {
   return new File([typeof content === 'string' ? content : JSON.stringify(content)], name, { type: 'application/json' })
 }
 
-function openDataScreen() {
+async function openDataScreen() {
   window.history.replaceState(null, '', '/#/data')
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
 }
 
 function selectFile(file: File) {
@@ -72,7 +73,7 @@ afterEach(() => {
 })
 
 test('記録の画面の「データ」ボタンでデータ画面が開き、「記録の画面へ」で戻れる', async () => {
-  render(<App today={TODAY} />)
+  await renderApp(<App today={TODAY} />)
   fireEvent.click(screen.getByRole('button', { name: 'データ' }))
   expect(window.location.hash).toBe('#/data')
   expect(screen.getByRole('heading', { name: 'データ' })).toBeInTheDocument()
@@ -83,8 +84,8 @@ test('記録の画面の「データ」ボタンでデータ画面が開き、�
   expect(screen.getByText('2026年11月6日（金）')).toBeInTheDocument()
 })
 
-test('アドレスが #/data なら、データ画面が開く', () => {
-  openDataScreen()
+test('アドレスが #/data なら、データ画面が開く', async () => {
+  await openDataScreen()
   expect(screen.getByRole('heading', { name: 'データ' })).toBeInTheDocument()
 })
 
@@ -93,7 +94,7 @@ describe('書き出し', () => {
     const downloads = captureDownloads()
     const records = [record({ id: 'b', date: '2026-12-01', status: 'planned' }), record()]
     seed(records)
-    openDataScreen()
+    await openDataScreen()
 
     fireEvent.click(screen.getByRole('button', { name: '書き出す' }))
     expect(await screen.findByRole('status')).toHaveTextContent('2件の記録を書き出しました')
@@ -108,7 +109,7 @@ describe('書き出し', () => {
 
   test('0件でも書き出せる', async () => {
     const downloads = captureDownloads()
-    openDataScreen()
+    await openDataScreen()
     fireEvent.click(screen.getByRole('button', { name: '書き出す' }))
     expect(await screen.findByRole('status')).toHaveTextContent('0件の記録を書き出しました')
     expect(JSON.parse(await downloads[0].blob.text()).records).toEqual([])
@@ -117,7 +118,7 @@ describe('書き出し', () => {
   test('保存データが壊れているときは、エラーを表示する', async () => {
     captureDownloads()
     window.localStorage.setItem(MEAL_STORAGE_KEY, '{broken')
-    openDataScreen()
+    await openDataScreen()
     fireEvent.click(screen.getByRole('button', { name: '書き出す' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('書き出せませんでした')
   })
@@ -141,7 +142,7 @@ describe('読み込み', () => {
 
   test('件数を表示して確認を取り、取り込むと規則どおりに混ぜて、結果を表示する', async () => {
     seed(existing)
-    openDataScreen()
+    await openDataScreen()
     selectFile(fileOf(file))
 
     const confirm = await screen.findByRole('group', { name: '取り込みの確認' })
@@ -160,7 +161,7 @@ describe('読み込み', () => {
 
   test('確認で取り消すと、何も変わらない', async () => {
     seed(existing)
-    openDataScreen()
+    await openDataScreen()
     selectFile(fileOf(file))
     const confirm = await screen.findByRole('group', { name: '取り込みの確認' })
     fireEvent.click(within(confirm).getByRole('button', { name: '取り消す' }))
@@ -171,7 +172,7 @@ describe('読み込み', () => {
   })
 
   test('取り込む記録の状態を、日付の決まりに合わせて直す（ID と日時は保つ）', async () => {
-    openDataScreen()
+    await openDataScreen()
     selectFile(
       fileOf({
         version: 1,
@@ -197,7 +198,7 @@ describe('読み込み', () => {
     ['ID が重なっている', { version: 1, records: [record(), record()] }, '2件目の記録の ID が、1件目と同じです: a'],
   ])('不正なファイル（%s）は、何も取り込まず、エラーを表示する', async (_, content, message) => {
     seed(existing)
-    openDataScreen()
+    await openDataScreen()
     selectFile(fileOf(content))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('読み込めませんでした（何も取り込んでいません）')
@@ -209,7 +210,7 @@ describe('読み込み', () => {
   test('保存に失敗したときは、データを元のままにして、エラーを表示する', async () => {
     seed(existing)
     const before = window.localStorage.getItem(MEAL_STORAGE_KEY)
-    openDataScreen()
+    await openDataScreen()
     selectFile(fileOf(file))
     const confirm = await screen.findByRole('group', { name: '取り込みの確認' })
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
@@ -222,7 +223,7 @@ describe('読み込み', () => {
   })
 
   test('取り込んだ後、記録の画面に取り込んだ記録が表示される', async () => {
-    openDataScreen()
+    await openDataScreen()
     selectFile(fileOf({ version: 1, records: [record({ id: 'x', date: TODAY, mealType: 'lunch', name: 'うどん' })] }))
     fireEvent.click(await screen.findByRole('button', { name: '取り込む' }))
     await screen.findByRole('status')

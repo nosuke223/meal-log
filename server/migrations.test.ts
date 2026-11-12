@@ -48,10 +48,10 @@ describe('D1 のマイグレーション', () => {
       'DB',
       '--json',
       '--command',
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meals'",
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'member_meals'",
     )
     const result = JSON.parse(output) as { results: { name: string }[] }[]
-    expect(result[0].results).toEqual([{ name: 'meals' }])
+    expect(result[0].results).toEqual([{ name: 'member_meals' }])
 
     // 2回目は、適用済みなので何もしない（失敗しない）
     await wrangler('d1', 'migrations', 'apply', 'DB')

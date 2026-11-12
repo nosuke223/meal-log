@@ -50,7 +50,7 @@ type CallOptions = {
   origin?: string | null
   /** 利用者の IP アドレス（Cloudflare の CF-Connecting-IP） */
   ip?: string
-  /** 環境変数（既定は Access の設定と BETTER_AUTH_SECRET と MAIL_FROM。DEV_USER_EMAIL はない＝Access の JWT が要る） */
+  /** 環境変数（既定は BETTER_AUTH_SECRET と MAIL_FROM） */
   env?: Partial<ApiEnv>
   base?: string
 }
@@ -66,7 +66,6 @@ type CallResult = {
 /** API を呼ぶ関数を作る。メールは、既定ではこのテストの mailbox にためる */
 function createClient(options: Pick<ApiOptions, 'mailTransport'> = {}) {
   const handle = createApiHandler({
-    fetch: () => Promise.reject(new Error('Access の公開鍵は取りに行かない')),
     mailTransport: 'mailTransport' in options ? options.mailTransport : mailbox,
   })
   return async function call(method: string, path: string, options: CallOptions = {}): Promise<CallResult> {
@@ -83,8 +82,6 @@ function createClient(options: Pick<ApiOptions, 'mailTransport'> = {}) {
     })
     const env: ApiEnv = {
       DB: database.db,
-      ACCESS_TEAM_NAME: 'meal-log-team',
-      ACCESS_AUD: 'aud-tag',
       BETTER_AUTH_SECRET: SECRET,
       MAIL_FROM,
       ...options.env,
@@ -971,23 +968,140 @@ describe('他のオリジンからのリクエスト', () => {
   })
 })
 
-describe('Access と BETTER_AUTH_SECRET', () => {
-  it('/api/auth/ は Access の JWT がなくても動く（記録の API は 401 のまま）', async () => {
-    const call = createClient()
+describe('記録の API の認証（ログインの cookie）', () => {
+  const lunch = { date: '2026-11-11', mealType: 'lunch', name: 'うどん', status: 'eaten' }
 
+  /** 記録の API の応答が、ログインしていないとき（401 Unauthorized）か */
+  function expectUnauthorized(response: CallResult) {
+    expect(response.status).toBe(401)
+    expect((response.body?.error as { type: string }).type).toBe('Unauthorized')
+  }
+
+  /** 記録の API のすべての操作が 401 になる */
+  async function expectAllRejected(call: Call, cookie?: string) {
+    for (const [method, path, body] of [
+      ['GET', '/api/meals', undefined],
+      ['GET', '/api/meals?date=2026-11-11', undefined],
+      ['GET', '/api/meals?from=2026-11-01&to=2026-11-30', undefined],
+      ['GET', '/api/meal?id=a', undefined],
+      ['POST', '/api/meals', lunch],
+      ['PATCH', '/api/meal?id=a', { name: 'そば' }],
+      ['DELETE', '/api/meal?id=a', undefined],
+      ['POST', '/api/import', { records: [] }],
+      ['POST', '/api/mark-planned-as-eaten', { date: '2026-11-11' }],
+    ] as const) {
+      expectUnauthorized(await call(method, path, { cookie, body }))
+    }
+  }
+
+  async function mealCount(): Promise<number> {
+    return count('member_meals')
+  }
+
+  it('ログインしていない（cookie がない）と、記録の API はすべて 401（Unauthorized）', async () => {
+    const call = createClient()
     expect((await signUp(call, 'alice@example.com')).status).toBe(200)
-    const meals = await call('GET', '/api/meals')
-    expect(meals.status).toBe(401)
-    expect((meals.body?.error as { type: string }).type).toBe('Unauthorized')
+
+    await expectAllRejected(call)
+    expect(await mealCount()).toBe(0)
   })
 
-  it('ログインの cookie だけでは、記録の API は使えない（記録は、まだ Access のログインで読み書きする）', async () => {
+  it('ログインの cookie で、記録の API を使える', async () => {
     const call = createClient()
     const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
 
-    expect((await call('GET', '/api/meals', { cookie })).status).toBe(401)
+    const created = await call('POST', '/api/meals', { cookie, body: lunch })
+    expect(created.status).toBe(201)
+    const listed = await call('GET', '/api/meals', { cookie })
+    expect(listed.status).toBe(200)
+    expect(listed.body?.meals).toEqual([created.body?.meal])
   })
 
+  it('ログアウトした後のセッションの cookie は、401', async () => {
+    const call = createClient()
+    const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
+    expect((await call('GET', '/api/meals', { cookie })).status).toBe(200)
+
+    expect((await call('POST', '/api/auth/sign-out', { cookie })).status).toBe(200)
+    await expectAllRejected(call, cookie)
+    expect(await mealCount()).toBe(0)
+  })
+
+  it('期限が切れたセッションの cookie は、401', async () => {
+    const start = new Date('2026-11-11T00:00:00Z')
+    vi.useFakeTimers({ toFake: ['Date'], now: start })
+    const call = createClient()
+    const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
+    expect((await call('GET', '/api/meals', { cookie })).status).toBe(200)
+
+    // セッションの有効期限（Better Auth の既定は7日）を過ぎる
+    vi.setSystemTime(start.getTime() + 8 * 24 * 60 * 60 * 1000)
+    await expectAllRejected(call, cookie)
+  })
+
+  it('メールアドレスの確認が済んでいない会員のセッションは、401', async () => {
+    const call = createClient()
+    const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
+    // 確認が済んでいない会員は、ログインできないのでセッションができない。確認済みのセッションを、確認前に戻して確かめる
+    await database.db.prepare('UPDATE "user" SET "emailVerified" = 0').run()
+
+    await expectAllRejected(call, cookie)
+    expect(await mealCount()).toBe(0)
+  })
+
+  it('正しくない（書き換えた、別の秘密の値で作った）cookie は、401', async () => {
+    const call = createClient()
+    const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
+    const tampered = cookie.replace(/session_token=([^;]+)/, (_, value: string) => `session_token=${value.slice(0, -4)}AAAA`)
+    const broken = cookie.replace(/session_token=([^;]+)/, 'session_token=broken')
+    expect(tampered).not.toBe(cookie)
+
+    await expectAllRejected(call, tampered)
+    await expectAllRejected(call, broken)
+    expectUnauthorized(await call('GET', '/api/meals', { cookie, env: { BETTER_AUTH_SECRET: `${SECRET}-other` } }))
+  })
+
+  it('他のオリジンからの書き込みは 403（Forbidden）で、何も変えない。Origin がないか同じオリジンなら受け付ける', async () => {
+    const call = createClient()
+    const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
+    const created = await call('POST', '/api/meals', { cookie, body: lunch })
+    const id = (created.body?.meal as { id: string }).id
+
+    for (const [method, path, body] of [
+      ['POST', '/api/meals', lunch],
+      ['PATCH', `/api/meal?id=${id}`, { name: 'そば' }],
+      ['DELETE', `/api/meal?id=${id}`, undefined],
+      ['POST', '/api/import', { records: [] }],
+      ['POST', '/api/mark-planned-as-eaten', { date: '2026-11-11' }],
+    ] as const) {
+      const response = await call(method, path, { cookie, body, origin: 'https://evil.example' })
+      expect(response.status).toBe(403)
+      expect((response.body?.error as { type: string }).type).toBe('Forbidden')
+    }
+    expect((await call('GET', '/api/meals', { cookie })).body?.meals).toEqual([created.body?.meal])
+
+    expect((await call('PATCH', `/api/meal?id=${id}`, { cookie, body: { name: 'そば' }, origin: null })).status).toBe(200)
+    expect((await call('DELETE', `/api/meal?id=${id}`, { cookie })).status).toBe(204)
+  })
+
+  it('BETTER_AUTH_SECRET がないとき、記録の API は 500（AuthConfigurationError）', async () => {
+    const call = createClient()
+    const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
+
+    for (const value of [undefined, '', '  ']) {
+      for (const options of [{}, { cookie }]) {
+        const response = await call('GET', '/api/meals', { ...options, env: { BETTER_AUTH_SECRET: value } })
+        expect(response.status).toBe(500)
+        expect(response.body?.error).toEqual({
+          type: 'AuthConfigurationError',
+          message: '環境変数 BETTER_AUTH_SECRET を設定してください',
+        })
+      }
+    }
+  })
+})
+
+describe('BETTER_AUTH_SECRET', () => {
   it('BETTER_AUTH_SECRET がないとき、/api/auth/ は 500（AuthConfigurationError）で、秘密の値がないことが分かる', async () => {
     const call = createClient()
 
@@ -1002,16 +1116,18 @@ describe('Access と BETTER_AUTH_SECRET', () => {
     expect(await count('user')).toBe(0)
   })
 
-  it('BETTER_AUTH_SECRET とメールの設定がなくても、記録の API と /api/health は今までどおり動く', async () => {
+  it('BETTER_AUTH_SECRET とメールの設定がなくても、/api/health は動く', async () => {
     const call = createClient({ mailTransport: undefined })
-    const env = { BETTER_AUTH_SECRET: undefined, MAIL_FROM: undefined, DEV_USER_EMAIL: 'alice@example.com' }
+    const env = { BETTER_AUTH_SECRET: undefined, MAIL_FROM: undefined }
 
-    expect((await call('GET', '/api/meals', { env })).status).toBe(200)
-    const created = await call('POST', '/api/meals', {
-      env,
-      body: { date: '2026-11-11', mealType: 'lunch', name: 'うどん', status: 'eaten' },
-    })
-    expect(created.status).toBe(201)
     expect((await call('GET', '/api/health', { env })).status).toBe(200)
+  })
+
+  it('メールの設定がなくても、ログイン中の会員は記録の API を使える', async () => {
+    const call = createClient()
+    const { cookie } = await signUpAndSignIn(call, 'alice@example.com')
+    const env = { MAIL_FROM: undefined }
+
+    expect((await call('GET', '/api/meals', { cookie, env })).status).toBe(200)
   })
 })
