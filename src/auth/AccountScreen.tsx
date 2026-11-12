@@ -59,15 +59,10 @@ export function AccountScreen({ authClient, onSignedIn, onSignedOut, onOpenSignu
     }
   }
 
+  // 「記録の画面へ」は、ログイン中のときだけ出す（記録の画面は、ログインしていないと開けない）
   if (state.kind === 'signedOut') {
     return (
-      <LoginScreen
-        authClient={authClient}
-        onSignedIn={onSignedIn}
-        onOpenSignup={onOpenSignup}
-        onOpenForgot={onOpenForgot}
-        onBack={onBack}
-      />
+      <LoginScreen authClient={authClient} onSignedIn={onSignedIn} onOpenSignup={onOpenSignup} onOpenForgot={onOpenForgot} />
     )
   }
 
@@ -75,9 +70,12 @@ export function AccountScreen({ authClient, onSignedIn, onSignedOut, onOpenSignu
     <main className="screen">
       <header className="screen-header">
         <h1>アカウント</h1>
-        <button type="button" onClick={onBack}>
-          記録の画面へ
-        </button>
+        {/* ログイン中と確かめられるまでは出さない */}
+        {state.kind === 'signedIn' && (
+          <button type="button" onClick={onBack}>
+            記録の画面へ
+          </button>
+        )}
       </header>
       {state.kind === 'loading' && (
         <p role="status" className="description">

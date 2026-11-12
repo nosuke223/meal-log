@@ -5,7 +5,8 @@ import { CredentialsForm } from './CredentialsForm'
 type Props = {
   authClient: AuthClient
   onOpenLogin: () => void
-  onBack: () => void
+  /** 「記録の画面へ」。省略すると、ボタンを出さない（ログインしていないときは、行き先がないため） */
+  onBack?: () => void
 }
 
 /**
@@ -18,9 +19,11 @@ export function SignupScreen({ authClient, onOpenLogin, onBack }: Props) {
     <main className="screen">
       <header className="screen-header">
         <h1>会員登録</h1>
-        <button type="button" onClick={onBack}>
-          記録の画面へ
-        </button>
+        {onBack && (
+          <button type="button" onClick={onBack}>
+            記録の画面へ
+          </button>
+        )}
       </header>
       <section className="section">
         {sent ? (

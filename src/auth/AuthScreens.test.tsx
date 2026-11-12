@@ -180,7 +180,7 @@ test('ログアウトすると、ログインの画面になり、もう一度�
   expect(await authClient.getSession()).toEqual({ email: 'alice@example.com' })
 })
 
-test('ログインの画面と会員登録の画面を、互いに行き来でき、「記録の画面へ」で今日の記録の画面に戻る', async () => {
+test('ログイン中は、ログインの画面と会員登録の画面を、互いに行き来でき、「記録の画面へ」で今日の記録の画面に戻る', async () => {
   open('#/login')
   render(<App today={TODAY} />)
 
@@ -192,8 +192,26 @@ test('ログインの画面と会員登録の画面を、互いに行き来で�
   expect(window.location.hash).toBe('#/login')
   expect(screen.getByRole('heading', { name: 'ログイン' })).toBeInTheDocument()
 
-  fireEvent.click(screen.getByRole('button', { name: '記録の画面へ' }))
+  // ログインの状態を確かめてから出る
+  fireEvent.click(await screen.findByRole('button', { name: '記録の画面へ' }))
   await expectTodayScreen()
+})
+
+test.each([
+  ['#/login', 'ログイン'],
+  ['#/signup', '会員登録'],
+  ['#/forgot', 'パスワードの再設定'],
+  ['#/reset', '新しいパスワード'],
+  ['#/account', 'アカウント'],
+])('ログイン中は、%s の画面の「記録の画面へ」で、今日の記録の画面に移る（履歴が増える）', async (hash, heading) => {
+  open(hash)
+  const historyLength = window.history.length
+  render(<App today={TODAY} authClient={createMemoryAuthClient({ signedInAs: 'alice@example.com' })} />)
+  expect(screen.getByRole('heading', { name: heading })).toBeInTheDocument()
+
+  fireEvent.click(await screen.findByRole('button', { name: '記録の画面へ' }))
+  await expectTodayScreen()
+  expect(window.history.length).toBe(historyLength + 1)
 })
 
 const NEW_PASSWORD = 'new-password-456'

@@ -38,7 +38,7 @@ type Props = {
 
 /**
  * ログインの状態
- *   unknown   まだ確かめていない（記録の画面を開くときに確かめる）
+ *   unknown   まだ確かめていない（アカウントの画面のほかを開くときに確かめる）
  *   signedIn  ログイン中
  *   signedOut ログインしていない。expired は、使っている途中でログインの期限が切れたか（ログインの画面に知らせを出す）
  *   error     確かめられなかった
@@ -211,8 +211,10 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     }
   })
 
-  // ログインしていないと開けない画面を開いたときに、まだ確かめていなければ、ログインしているかを確かめる
-  const checkSession = needsLogin(route) && session.kind === 'unknown'
+  // 画面を開いたときに、まだ確かめていなければ、ログインしているかを確かめる。
+  // ログインなどの画面でも確かめる（ログイン中なら「記録の画面へ」を出すため）。
+  // アカウントの画面は、画面の中で確かめる
+  const checkSession = route.screen !== 'account' && session.kind === 'unknown'
   useEffect(() => {
     if (!checkSession) return
     let cancelled = false
@@ -270,10 +272,13 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     )
   }
 
-  // ログインの画面は、ログインしたら今日の記録の画面に移る
+  // ログインの画面は、ログインしたら今日の記録の画面に移る。
+  // 「記録の画面へ」は、ログイン中のときだけ出す（ログインしていない、またはまだ確かめていないときは、
+  // 記録の画面を開いてもログインの画面に移るだけなので出さない）
+  const backToToday = () => navigate(todayHash())
   const authScreenProps = {
     authClient,
-    onBack: () => navigate(todayHash()),
+    onBack: session.kind === 'signedIn' ? backToToday : undefined,
   }
   if (route.screen === 'login') {
     return (
@@ -313,7 +318,9 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
   if (route.screen === 'account') {
     return (
       <AccountScreen
-        {...authScreenProps}
+        authClient={authClient}
+        // アカウントの画面は、画面の中で確かめたログインの状態で、「記録の画面へ」を出すかを決める
+        onBack={backToToday}
         onSignedIn={signedIn}
         // ログアウトしたら、その会員の記録を画面に残さない（記録の画面を開くと、ログインの画面に移る）
         onSignedOut={() => {

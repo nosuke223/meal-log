@@ -4,7 +4,8 @@ import { AUTH_MESSAGES, AuthError, checkEmail, type AuthClient } from './authCli
 type Props = {
   authClient: AuthClient
   onOpenLogin: () => void
-  onBack: () => void
+  /** 「記録の画面へ」。省略すると、ボタンを出さない（ログインしていないときは、行き先がないため） */
+  onBack?: () => void
 }
 
 function messageOf(error: unknown): string {
@@ -47,9 +48,11 @@ export function ForgotScreen({ authClient, onOpenLogin, onBack }: Props) {
     <main className="screen">
       <header className="screen-header">
         <h1>パスワードの再設定</h1>
-        <button type="button" onClick={onBack}>
-          記録の画面へ
-        </button>
+        {onBack && (
+          <button type="button" onClick={onBack}>
+            記録の画面へ
+          </button>
+        )}
       </header>
       <section className="section">
         {sent ? (
