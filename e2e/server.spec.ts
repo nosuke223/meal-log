@@ -175,6 +175,41 @@ test('ログインしていないと、記録、カレンダー、データの�
   }
 })
 
+test('ログインしていないと、ログインなどの画面に「記録の画面へ」を出さない。ログイン中は出し、今日の記録の画面に移る', async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  const context = await browser.newContext({ baseURL, ...NO_COOKIES })
+  try {
+    for (const [hash, heading] of [
+      ['#/login', 'ログイン'],
+      ['#/signup', '会員登録'],
+      ['#/forgot', 'パスワードの再設定'],
+      ['#/reset', '新しいパスワード'],
+      ['#/account', 'ログイン'],
+    ]) {
+      // ログインの状態を確かめ終えてから、ボタンがないことを確かめる。
+      // アドレスの # の後だけを変える goto は読み込み直さない（確かめ直さない）ので、画面ごとに新しいページで開く
+      const signedOut = await context.newPage()
+      const checked = signedOut.waitForResponse((response) => response.url().endsWith('/api/auth/get-session'))
+      await signedOut.goto(`/${hash}`)
+      await checked
+      await expect(signedOut.getByRole('heading', { name: heading })).toBeVisible()
+      await expect(signedOut.getByRole('button', { name: '記録の画面へ' })).toHaveCount(0)
+      await expect(signedOut).toHaveURL(new RegExp(`${hash}$`))
+    }
+  } finally {
+    await context.close()
+  }
+
+  // ログイン中（テストの会員）は、会員登録の画面にも出し、押すと今日の記録の画面に移る
+  await page.goto('/#/signup')
+  await page.getByRole('button', { name: '記録の画面へ' }).click()
+  await expect(page).toHaveURL(/#\/$/)
+  await expect(section(page, '朝')).toBeVisible()
+})
+
 /** タブや画面に戻ってきたときにブラウザが送るイベントを、画面に送る */
 async function returnToTab(page: Page, event: 'focus' | 'visibilitychange') {
   await page.evaluate((name) => {

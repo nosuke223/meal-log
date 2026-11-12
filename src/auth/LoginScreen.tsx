@@ -10,7 +10,8 @@ type Props = {
   onSignedIn: (member: Member) => void
   onOpenSignup: () => void
   onOpenForgot: () => void
-  onBack: () => void
+  /** 「記録の画面へ」。省略すると、ボタンを出さない（ログインしていないときは、行き先がないため） */
+  onBack?: () => void
 }
 
 /** 結果の説明と、確認のメールの送り直しのフォームを出すか */
@@ -31,9 +32,11 @@ export function LoginScreen({ authClient, notice: result = null, onSignedIn, onO
     <main className="screen">
       <header className="screen-header">
         <h1>ログイン</h1>
-        <button type="button" onClick={onBack}>
-          記録の画面へ
-        </button>
+        {onBack && (
+          <button type="button" onClick={onBack}>
+            記録の画面へ
+          </button>
+        )}
       </header>
       {notice && (
         <section className="section" aria-label="お知らせ">

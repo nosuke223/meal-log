@@ -8,7 +8,8 @@ type Props = {
   /** 変更できたとき */
   onReset: () => void
   onOpenForgot: () => void
-  onBack: () => void
+  /** 「記録の画面へ」。省略すると、ボタンを出さない（ログインしていないときは、行き先がないため） */
+  onBack?: () => void
 }
 
 function messageOf(error: unknown): string {
@@ -102,9 +103,11 @@ export function ResetScreen({ authClient, token, onReset, onOpenForgot, onBack }
     <main className="screen">
       <header className="screen-header">
         <h1>新しいパスワード</h1>
-        <button type="button" onClick={onBack}>
-          記録の画面へ
-        </button>
+        {onBack && (
+          <button type="button" onClick={onBack}>
+            記録の画面へ
+          </button>
+        )}
       </header>
       <section className="section">{body}</section>
     </main>

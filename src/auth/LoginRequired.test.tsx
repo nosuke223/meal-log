@@ -147,6 +147,36 @@ describe('ログインしていないとき', () => {
     }
   })
 
+  test.each([
+    ['#/login', 'ログイン'],
+    ['#/signup', '会員登録'],
+    ['#/forgot', 'パスワードの再設定'],
+    ['#/reset', '新しいパスワード'],
+    ['#/account', 'ログイン'],
+  ])('%s の画面には、「記録の画面へ」を出さない（確かめる前も、確かめた後も）', async (hash, heading) => {
+    open(hash)
+    const view = render(<App today={TODAY} authClient={createMemoryAuthClient()} />)
+    // まだ確かめていないとき
+    expect(screen.queryByRole('button', { name: '記録の画面へ' })).not.toBeInTheDocument()
+
+    // 確かめた後（ログインしていない）
+    await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '記録の画面へ' })).not.toBeInTheDocument()
+    expect(window.location.hash).toBe(hash)
+    view.unmount()
+  })
+
+  test('会員登録の画面から「ログインへ」で移ったログインの画面にも、「記録の画面へ」を出さない', async () => {
+    open('#/signup')
+    await renderApp(<App today={TODAY} authClient={createMemoryAuthClient()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'ログインへ' }))
+    expect(screen.getByRole('heading', { name: 'ログイン' })).toBeInTheDocument()
+    expect(window.location.hash).toBe('#/login')
+    expect(screen.queryByRole('button', { name: '記録の画面へ' })).not.toBeInTheDocument()
+  })
+
   test('ログインの状態を確かめられないときは、エラーを出し、「もう一度試す」で確かめ直せる', async () => {
     const authClient = createMemoryAuthClient({ signedInAs: 'alice@example.com' })
     authClient.failNext(new AuthError(AUTH_MESSAGES.connectionFailed))
@@ -198,7 +228,7 @@ describe('使っている途中でログインが切れたとき', () => {
     expect(window.location.hash).toBe('#/login/session-expired')
   })
 
-  test('期限切れの文言は1回だけ出し、「記録の画面へ」を押すと、ただのログインの画面になる', async () => {
+  test('期限切れの文言は1回だけ出し、もう一度記録の画面を開くと、ただのログインの画面になる', async () => {
     const server = createServer('alice@example.com')
     await renderApp(<App today={TODAY} authClient={server.authClient} repository={server.repository} />)
     server.expire()
@@ -206,8 +236,14 @@ describe('使っている途中でログインが切れたとき', () => {
       window.dispatchEvent(new Event('focus'))
     })
     expect(await screen.findByText(AUTH_MESSAGES.sessionExpired)).toBeInTheDocument()
+    // ログインしていないので、「記録の画面へ」は出さない
+    expect(screen.queryByRole('button', { name: '記録の画面へ' })).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: '記録の画面へ' }))
+    // アドレスを書き換えて、記録の画面を開く
+    act(() => {
+      window.history.pushState(null, '', '#/')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
     expect(await screen.findByRole('form', { name: 'ログイン' })).toBeInTheDocument()
     expect(window.location.hash).toBe('#/login')
     expect(screen.queryByText(AUTH_MESSAGES.sessionExpired)).not.toBeInTheDocument()
@@ -298,8 +334,14 @@ describe('ログアウトしたとき', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'ログアウト' }))
     await screen.findByRole('form', { name: 'ログイン' })
 
+    // ログアウトした後のログインの画面には、「記録の画面へ」を出さない
+    expect(screen.queryByRole('button', { name: '記録の画面へ' })).not.toBeInTheDocument()
+
     // ログアウトした後に記録の画面を開くと、ログインの画面に移る
-    fireEvent.click(screen.getByRole('button', { name: '記録の画面へ' }))
+    act(() => {
+      window.history.pushState(null, '', '#/')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
     expect(await screen.findByRole('form', { name: 'ログイン' })).toBeInTheDocument()
     expect(window.location.hash).toBe('#/login')
     expect(screen.queryByText('アリスのごはん')).not.toBeInTheDocument()
