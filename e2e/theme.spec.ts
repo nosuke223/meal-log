@@ -138,6 +138,34 @@ test('ログインの画面のメールアドレスとパスワードの入力�
   }
 })
 
+/** 2つの色の明るさの差（WCAG 2.1 のコントラスト比） */
+function contrast(a: Rgb, b: Rgb): number {
+  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (light + 0.05) / (dark + 0.05)
+}
+
+async function expectReadable(locator: Locator) {
+  await expect(locator).toBeVisible()
+  const text = parseRgb(await style(locator, 'color'))
+  const background = parseRgb(await style(locator, 'backgroundColor'))
+  expect(contrast(text, background)).toBeGreaterThanOrEqual(4.5)
+}
+
+test('アカウントの画面の退会の節は、暗い見た目で、文字と背景の明るさの差が 4.5:1 以上', async ({ page }) => {
+  await page.goto('/#/account')
+  const form = page.getByRole('form', { name: '退会' })
+  await expectDarkControl(form.getByLabel('パスワード'))
+  await expectReadable(form.getByRole('button', { name: '退会する' }))
+
+  await form.getByLabel('パスワード').fill('any-password')
+  await form.getByRole('button', { name: '退会する' }).click()
+  const confirm = form.getByRole('group', { name: '退会の確認' })
+  expect(luminance(parseRgb(await style(confirm, 'backgroundColor')))).toBeLessThan(0.05)
+  expect(contrast(parseRgb(await style(confirm, 'color')), parseRgb(await style(confirm, 'backgroundColor')))).toBeGreaterThanOrEqual(4.5)
+  await expectReadable(confirm.getByRole('button', { name: '退会を確定する' }))
+  await expectReadable(confirm.getByRole('button', { name: 'やめる' }))
+})
+
 test('パスワードを忘れた画面のメールアドレスの入力欄は、暗い見た目で表示される', async ({ page }) => {
   await page.goto('/#/forgot')
   const form = page.getByRole('form', { name: '再設定のメール' })
