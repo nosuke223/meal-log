@@ -26,6 +26,7 @@
 | `RESEND_API_KEY` | メールを送る Resend の API キー（秘密の値）。**本番で必須**（ないと会員登録できない） | 手順5（本番）、手順10（プレビュー） |
 | `MAIL_FROM` | メールの送信元のアドレス。**本番で必須** | 手順5（本番）、手順10（プレビュー） |
 | `MAIL_ALLOWED_TO` | プレビュー専用。このアドレスにしかメールを送らない。**本番には設定しない** | 手順10（プレビューだけ）。本番にないことを手順6で確かめる |
+| `FREE_PLAN_RECORD_LIMIT` | プレビュー専用（任意）。無料のプランで保存できる記録の数（ないときは 300 品）。上限を手早く試すためのもの。**本番には設定しない** | 手順11-3（プレビューだけ）。本番にないことを手順6で確かめる |
 
 開発用の値（名前が `DEV_` で始まるもの）は、手元の `npm run dev` と `npm run dev:api` が起動するときだけ使います。本番にもプレビューにも設定しません（手順6）。
 
@@ -216,9 +217,10 @@ API は Access のチーム名と AUD タグを使いません（以前の版で
 
 - `MAIL_ALLOWED_TO`（プレビュー専用）: 本番に入っていると、所有者以外にメールが届かず、会員登録できない
 - 名前が `DEV_` で始まるもの（手元の開発専用）: 本番のコードは読まないが、取り違えの印なので入れない
+- `FREE_PLAN_RECORD_LIMIT`（プレビュー専用）: 本番に入っていると、無料のプランの上限が 300 品でなくなる（例: `3` なら、会員が3品しか記録できない）
 
 1. 設定されていない。あれば削除して、再デプロイする（手順5。方法は未確認）
-   - ダッシュボードの「Settings」→「Variables and secrets」の「Production」に、`MAIL_ALLOWED_TO` と `DEV_` で始まる名前がない
+   - ダッシュボードの「Settings」→「Variables and secrets」の「Production」に、`MAIL_ALLOWED_TO`、`FREE_PLAN_RECORD_LIMIT`、`DEV_` で始まる名前がない
    - `npx wrangler pages secret list --project-name meal-log`（`--env preview` を付けない）の出力に出ない
 2. 開発専用の秘密の値（`server/devApi.ts` の `DEV_BETTER_AUTH_SECRET`）を、本番とプレビューの `BETTER_AUTH_SECRET` に使っていない（手順5、9-2 で `openssl rand` で作った値を使う）
 
@@ -374,6 +376,78 @@ PR のプレビューのデプロイのアドレスで、次を確かめます�
 
 - 本番の `MAIL_FROM` は、ドメインを取った後は、そのドメインのアドレス（例: `no-reply@<ドメイン>`）にする
 - 本番には `MAIL_ALLOWED_TO` を**設定しない**（設定すると、所有者以外にメールが届かなくなる。手順6）
+
+## 11. プラン（無料・有料）を手で切り替える
+
+無料のプランで保存できる記録は 300 品までで、有料のプランは上限がありません（README の「プランと記録の上限」）。決済ができるまでは、プランを切り替える API や画面はないので、Cloudflare の画面の D1 の **Console** で SQL を実行して切り替えます。
+
+- 本番とプレビューの D1 は別です。本番の会員は本番の D1（`meal-log`）、プレビューの会員はプレビューの D1（`meal-log-preview`。手順9-1）で切り替えます。取り違えると、切り替わりません（別の D1 には、その会員がいない）
+- 会員のプランは、表 `member_plans` に入ります。行がない会員は無料です
+- Cloudflare の画面の名前や場所は変わることがあります。D1 の Console の操作は、実機で確かめていません（未確認）
+
+### 11-1. 表 `member_plans` ができていることを確かめる
+
+表 `member_plans` は、マイグレーション `0005_create_member_plans.sql` で、そのデプロイの最初のリクエストのときに、アプリが自分で作ります（「更新するとき」）。切り替える前に、切り替えたい側（本番、またはプレビューのデプロイ）のアドレスの `/api/health` を開き、`migrations` に `0005_create_member_plans.sql` が出ることを確かめます（本番のアドレスは Access が掛かっているので、ブラウザでログインしてから開く）。
+
+```sh
+curl -i 'https://<ハッシュ>.<サブドメイン>.pages.dev/api/health'
+```
+
+出ないときは、まだ一度も開かれていません。そのアドレスの画面を一度開いてから、もう一度確かめます。
+
+### 11-2. D1 の Console で切り替える（未確認）
+
+1. ダッシュボードの「Storage & Databases」→「D1 SQL Database」で、切り替えたい側の D1（本番は `meal-log`、プレビューは `meal-log-preview`）を開き、「Console」を開く（未確認）
+2. メールアドレスから会員を探す。会員のメールアドレスは小文字で保存されているので、`lower(…)` で小文字にして探す。出た `id` を控える
+
+   ```sql
+   SELECT id, email, emailVerified FROM "user" WHERE email = lower('<メールアドレス>');
+   ```
+
+3. 切り替える。`<会員の ID>` は 2. の `id`。行がなくても、あっても書ける形（`INSERT … ON CONFLICT … DO UPDATE`）です。`updated_at` は、ほかの表と同じ形（ISO 8601、UTC、ミリ秒まで）で入る
+
+   無料から有料にする:
+
+   ```sql
+   INSERT INTO member_plans (user_id, plan, updated_at) VALUES ('<会員の ID>', 'paid', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ON CONFLICT (user_id) DO UPDATE SET plan = excluded.plan, updated_at = excluded.updated_at;
+   ```
+
+   有料から無料に戻す:
+
+   ```sql
+   INSERT INTO member_plans (user_id, plan, updated_at) VALUES ('<会員の ID>', 'free', strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) ON CONFLICT (user_id) DO UPDATE SET plan = excluded.plan, updated_at = excluded.updated_at;
+   ```
+
+4. 切り替わったことを確かめる。`plan` が `paid`（有料）か `free`（無料）。`NULL` は行がない（無料）
+
+   ```sql
+   SELECT u.email, p.plan, p.updated_at FROM "user" AS u LEFT JOIN member_plans AS p ON p.user_id = u.id WHERE u.email = lower('<メールアドレス>');
+   ```
+
+5. アプリの「アカウント」の画面を開き直す。有料なら「プラン: 有料（記録 N 品。上限なし）」、無料なら「プラン: 無料（記録 N / 300 品）」と出る
+
+- `plan` には `free` と `paid` しか入りません（ほかの値は、表の決まりで失敗します）
+- 有料から無料に戻しても、記録は消えません。上限を超えている会員は、見る・変える・消す・書き出すはでき、追加と取り込みだけができなくなります（削除して上限を下回れば、また追加できます）
+- 会員が消えると（退会など）、その会員の `member_plans` の行も消えます
+
+### 11-3. プレビューで上限を手早く試す（`FREE_PLAN_RECORD_LIMIT`）
+
+プレビューで上限を試すのに300品を入れなくて済むよう、プレビューだけに、環境変数 `FREE_PLAN_RECORD_LIMIT`（無料のプランの上限）を入れられます。`--env preview` を必ず付けます（付けないと本番に入ります）。
+
+```sh
+npx wrangler pages secret put FREE_PLAN_RECORD_LIMIT --project-name meal-log --env preview
+```
+
+- `Enter a secret value:` と聞かれたら、上限の数（例: `3`）を入れる。1以上の整数だけが使われる（空、`0`、負数、小数、`1e3` などは無視して 300 品になり、記録に警告が出る）
+- 入ったことは `npx wrangler pages secret list --project-name meal-log --env preview` で確かめる。次のデプロイから効く（手順5の注意）
+- 効いていることは、プレビューのアカウントの画面に「記録 N / 3 品」のように、入れた数が出ることで確かめる
+- 試し終わったら消す（残すと、ほかの PR のプレビューも、その数で止まる）
+
+  ```sh
+  npx wrangler pages secret delete FREE_PLAN_RECORD_LIMIT --project-name meal-log --env preview
+  ```
+
+- 本番には**設定しない**（手順6）。本番にないことは、`npx wrangler pages secret list --project-name meal-log`（`--env` なし）に `FREE_PLAN_RECORD_LIMIT` が出ないことで確かめる
 
 ## 更新するとき
 
