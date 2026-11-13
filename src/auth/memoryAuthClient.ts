@@ -134,5 +134,18 @@ export function createMemoryAuthClient(options: MemoryAuthClientOptions = {}): A
       member.password = newPassword
       if (current?.email === email) current = null
     },
+
+    async deleteAccount(password) {
+      takeError()
+      const member = current === null ? undefined : members.get(current.email)
+      if (current === null || member === undefined) throw new AuthError(AUTH_MESSAGES.sessionExpired)
+      // パスワードが違うときは、何も消さない
+      if (password === '' || member.password !== password) throw new AuthError(AUTH_MESSAGES.wrongPassword)
+      members.delete(current.email)
+      for (const [token, email] of resetTokens) {
+        if (email === current.email) resetTokens.delete(token)
+      }
+      current = null
+    },
   }
 }

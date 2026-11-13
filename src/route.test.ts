@@ -79,8 +79,8 @@ test('ログイン、会員登録、アカウントのハッシュは、それ�
   expect(parseHash(accountHash(), TODAY)).toEqual({ screen: 'account' })
 })
 
-test('確認のメールのリンクの結果と、パスワードを再設定した結果のハッシュは、結果を付けたログインの画面にする。知らない結果は、ただのログインの画面', () => {
-  for (const result of [...EMAIL_VERIFICATION_RESULTS, 'password-reset'] as const) {
+test('確認のメールのリンクの結果と、パスワードを再設定した結果と、退会した結果のハッシュは、結果を付けたログインの画面にする。知らない結果は、ただのログインの画面', () => {
+  for (const result of [...EMAIL_VERIFICATION_RESULTS, 'password-reset', 'account-deleted'] as const) {
     expect(loginHash(result)).toBe(`#/login/${result}`)
     expect(parseHash(loginHash(result), TODAY)).toEqual({ screen: 'login', notice: result })
   }

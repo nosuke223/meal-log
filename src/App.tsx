@@ -333,6 +333,12 @@ function App({ repository, authClient: givenAuthClient, planClient: givenPlanCli
           setSession({ kind: 'signedOut', expired: false })
           setAutoUpdateError(null)
         }}
+        // 退会したら、ログアウトしたときと同じく前の会員の記録を残さず、ログインの画面にお知らせを出す（履歴は増やさない）
+        onDeleted={() => {
+          setSession({ kind: 'signedOut', expired: false })
+          setAutoUpdateError(null)
+          navigate(loginHash('account-deleted'), true)
+        }}
         onOpenSignup={() => navigate(signupHash())}
         onOpenForgot={() => navigate(forgotHash())}
       />

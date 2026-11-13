@@ -6,7 +6,7 @@ import { LoginExpiredError } from '../meals/mealRepository'
 import { createMemoryPlanClient } from '../plan/memoryPlanClient'
 import { renderApp } from '../renderApp'
 import { AUTH_MESSAGES, AuthError } from './authClient'
-import { createMemoryAuthClient } from './memoryAuthClient'
+import { createMemoryAuthClient, MEMORY_MEMBER_PASSWORD } from './memoryAuthClient'
 
 const TODAY = '2026-11-06'
 const PASSWORD = 'password-123'
@@ -574,5 +574,140 @@ describe('アカウントの画面のプラン', () => {
     render(<App today={TODAY} authClient={signedIn()} planClient={planClient} />)
 
     expect(await screen.findByRole('form', { name: 'ログイン' })).toBeInTheDocument()
+  })
+})
+
+describe('退会', () => {
+  async function openAccount(authClient = createMemoryAuthClient({ signedInAs: 'alice@example.com' })) {
+    open('#/account')
+    render(<App today={TODAY} authClient={authClient} planClient={createMemoryPlanClient()} />)
+    await screen.findByRole('form', { name: '退会' })
+    return authClient
+  }
+
+  function requestDelete(password: string) {
+    fireEvent.change(form('退会').getByLabelText('パスワード'), { target: { value: password } })
+    fireEvent.click(form('退会').getByRole('button', { name: '退会する' }))
+  }
+
+  test('ログイン中なら、ログアウトの下に退会の節と説明を出す', async () => {
+    await openAccount()
+
+    expect(screen.getByRole('heading', { name: '退会' })).toBeInTheDocument()
+    expect(screen.getByText(/アカウントと、保存しているすべての記録が消え、元に戻せません/)).toBeInTheDocument()
+    expect(screen.getByText(/バックアップには最長30日残ります/)).toBeInTheDocument()
+    expect(screen.getByText(/先にデータ画面で記録を書き出してください/)).toBeInTheDocument()
+    expect(screen.getByText(/同じメールアドレスで登録し直せますが、前の記録は戻りません/)).toBeInTheDocument()
+    // ログアウトのボタンより後に出す
+    const signOut = screen.getByRole('button', { name: 'ログアウト' })
+    const deleteForm = screen.getByRole('form', { name: '退会' })
+    expect(signOut.compareDocumentPosition(deleteForm) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  test('ログインしていなければ、退会の節は出さない', async () => {
+    open('#/account')
+    render(<App today={TODAY} authClient={createMemoryAuthClient()} />)
+
+    expect(await screen.findByRole('form', { name: 'ログイン' })).toBeInTheDocument()
+    expect(screen.queryByRole('form', { name: '退会' })).not.toBeInTheDocument()
+  })
+
+  test('パスワードが空なら送らず、日本語のエラーを出す', async () => {
+    const authClient = await openAccount()
+
+    requestDelete('')
+    expect(await form('退会').findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.emptyCurrentPassword)
+    expect(screen.queryByRole('group', { name: '退会の確認' })).not.toBeInTheDocument()
+    expect(await authClient.getSession()).toEqual({ email: 'alice@example.com' })
+  })
+
+  test('「退会する」を押しても、すぐには消さず、画面の中で確かめる。「やめる」で何も起きずに戻る', async () => {
+    const authClient = await openAccount()
+
+    requestDelete(MEMORY_MEMBER_PASSWORD)
+    const confirm = screen.getByRole('group', { name: '退会の確認' })
+    expect(confirm).toHaveTextContent('本当に退会しますか。この操作は取り消せません')
+    expect(await authClient.getSession()).toEqual({ email: 'alice@example.com' })
+
+    fireEvent.click(within(confirm).getByRole('button', { name: 'やめる' }))
+    expect(screen.queryByRole('group', { name: '退会の確認' })).not.toBeInTheDocument()
+    expect(form('退会').getByRole('button', { name: '退会する' })).toBeEnabled()
+    expect(window.location.hash).toBe('#/account')
+    expect(await authClient.getSession()).toEqual({ email: 'alice@example.com' })
+    // 退会していないので、同じパスワードでログインし直せる
+    await authClient.signOut()
+    await expect(authClient.signIn('alice@example.com', MEMORY_MEMBER_PASSWORD)).resolves.toEqual({ email: 'alice@example.com' })
+  })
+
+  test('「退会を確定する」で退会し、ログインの画面に移って、お知らせを出す。前の会員の記録の画面は開けない', async () => {
+    const authClient = await openAccount()
+
+    requestDelete(MEMORY_MEMBER_PASSWORD)
+    fireEvent.click(screen.getByRole('button', { name: '退会を確定する' }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(AUTH_MESSAGES.accountDeleted)
+    expect(window.location.hash).toBe('#/login/account-deleted')
+    expect(screen.getByRole('form', { name: 'ログイン' })).toBeInTheDocument()
+    // ログインしていないので、「記録の画面へ」は出さない
+    expect(screen.queryByRole('button', { name: '記録の画面へ' })).not.toBeInTheDocument()
+    expect(await authClient.getSession()).toBeNull()
+
+    // 記録の画面を開くと、ログインの画面に移る
+    window.location.hash = '#/'
+    await waitFor(() => expect(window.location.hash).toBe('#/login'))
+    expect(screen.queryByRole('heading', { name: 'meal-log' })).not.toBeInTheDocument()
+
+    // 同じメールアドレスとパスワードではログインできない
+    await signIn('alice@example.com', MEMORY_MEMBER_PASSWORD)
+    expect(await form('ログイン').findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.wrongCredentials)
+  })
+
+  test('処理中は、「退会を確定する」と「やめる」を押せない', async () => {
+    const authClient = createMemoryAuthClient({ signedInAs: 'alice@example.com' })
+    let finish: () => void = () => {}
+    const original = authClient.deleteAccount.bind(authClient)
+    authClient.deleteAccount = (password) =>
+      new Promise<void>((resolve, reject) => {
+        finish = () => original(password).then(resolve, reject)
+      })
+    await openAccount(authClient)
+
+    requestDelete(MEMORY_MEMBER_PASSWORD)
+    fireEvent.click(screen.getByRole('button', { name: '退会を確定する' }))
+    expect(screen.getByRole('button', { name: '退会を確定する' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'やめる' })).toBeDisabled()
+
+    finish()
+    expect(await screen.findByRole('status')).toHaveTextContent(AUTH_MESSAGES.accountDeleted)
+  })
+
+  test('パスワードが違うときは、日本語のエラーを出し、アカウントの画面のまま（退会しない）', async () => {
+    const authClient = await openAccount()
+
+    requestDelete('wrong-password')
+    fireEvent.click(screen.getByRole('button', { name: '退会を確定する' }))
+
+    expect(await form('退会').findByRole('alert')).toHaveTextContent(AUTH_MESSAGES.wrongPassword)
+    expect(window.location.hash).toBe('#/account')
+    expect(screen.getByText('alice@example.com')).toBeInTheDocument()
+    expect(form('退会').getByLabelText('パスワード')).toHaveValue('')
+    expect(form('退会').getByRole('button', { name: '退会する' })).toBeEnabled()
+    expect(await authClient.getSession()).toEqual({ email: 'alice@example.com' })
+  })
+
+  test.each([
+    ['回数の上限を超えた', AUTH_MESSAGES.tooManyRequests],
+    ['通信に失敗した', AUTH_MESSAGES.connectionFailed],
+    ['サーバーでエラーが起きた', 'サーバーでエラーが起きました'],
+  ])('%sときは、日本語のエラーを出し、アカウントの画面のまま', async (_, message) => {
+    const authClient = await openAccount()
+
+    requestDelete(MEMORY_MEMBER_PASSWORD)
+    authClient.failNext(new AuthError(message))
+    fireEvent.click(screen.getByRole('button', { name: '退会を確定する' }))
+
+    expect(await form('退会').findByRole('alert')).toHaveTextContent(message)
+    expect(window.location.hash).toBe('#/account')
+    expect(await authClient.getSession()).toEqual({ email: 'alice@example.com' })
   })
 })

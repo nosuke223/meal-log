@@ -87,6 +87,30 @@ describe('ログインの API を呼ぶ窓口', () => {
     await expect(createApiAuthClient({ fetch }).resetPassword('t', '1234567')).rejects.toThrow(AUTH_MESSAGES.passwordTooShort)
   })
 
+  it('退会は POST /api/auth/delete-user に、パスワードを本文に入れて送る', async () => {
+    const { fetch, sent } = fakeFetch(() => json(200, { success: true, message: 'User deleted' }))
+
+    await expect(createApiAuthClient({ fetch }).deleteAccount('password-123')).resolves.toBeUndefined()
+    expect(sent[0].url).toBe('/api/auth/delete-user')
+    expect(sent[0].init.method).toBe('POST')
+    expect(JSON.parse(sent[0].init.body as string)).toEqual({ password: 'password-123' })
+  })
+
+  it.each([
+    ['パスワードが違う（INVALID_PASSWORD）', 400, { code: 'INVALID_PASSWORD', message: 'Invalid password' }, AUTH_MESSAGES.wrongPassword],
+    ['ログインしていない（UNAUTHORIZED）', 401, { code: 'UNAUTHORIZED', message: 'x' }, AUTH_MESSAGES.sessionExpired],
+    ['回数の上限', 429, { code: 'TOO_MANY_REQUESTS', message: 'x' }, AUTH_MESSAGES.tooManyRequests],
+    ['サーバーのエラー', 500, { error: { type: 'MealStorageError', message: 'サーバーでエラーが起きました' } }, 'サーバーでエラーが起きました'],
+  ])('退会で%sときは、日本語の AuthError にする', async (_, status, body, message) => {
+    const { fetch } = fakeFetch(() => json(status, body))
+    const error = await createApiAuthClient({ fetch })
+      .deleteAccount('password-123')
+      .catch((thrown: unknown) => thrown)
+
+    expect(error).toBeInstanceOf(AuthError)
+    expect((error as Error).message).toBe(message)
+  })
+
   it('メールアドレスの確認が済んでいないときのログインは、EmailNotVerifiedError にする', async () => {
     const { fetch } = fakeFetch(() => json(403, { code: 'EMAIL_NOT_VERIFIED', message: 'Email not verified' }))
     const error = await createApiAuthClient({ fetch })

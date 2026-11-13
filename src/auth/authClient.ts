@@ -30,6 +30,11 @@ export interface AuthClient {
    * 期限切れ、使用済み、正しくないトークンは ResetLinkError。成功したら、その会員のほかのログインは切れる
    */
   resetPassword(token: string, newPassword: string): Promise<void>
+  /**
+   * 退会する（ログイン中の会員のアカウントと、すべての記録を消す。元に戻せない）。本人の確かめに、パスワードを添える。
+   * パスワードが違うときは何も消さず AuthError。成功したら、ログインしていない状態になる
+   */
+  deleteAccount(password: string): Promise<void>
 }
 
 /** 登録やログインができなかったときのエラー。message は画面にそのまま出す日本語の説明 */
@@ -74,12 +79,17 @@ export function isEmailVerificationResult(value: unknown): value is EmailVerific
 
 /**
  * ログインの画面（#/login/<結果>）に出す結果。確認のメールのリンクの結果と、パスワードを再設定した結果（password-reset）と、
- * 使っている途中でログインの期限が切れた（記録の API が 401 を返した）こと（session-expired）
+ * 使っている途中でログインの期限が切れた（記録の API が 401 を返した）こと（session-expired）と、退会した（account-deleted）こと
  */
-export type LoginNotice = EmailVerificationResult | 'password-reset' | 'session-expired'
+export type LoginNotice = EmailVerificationResult | 'password-reset' | 'session-expired' | 'account-deleted'
 
 export function isLoginNotice(value: unknown): value is LoginNotice {
-  return value === 'password-reset' || value === 'session-expired' || isEmailVerificationResult(value)
+  return (
+    value === 'password-reset' ||
+    value === 'session-expired' ||
+    value === 'account-deleted' ||
+    isEmailVerificationResult(value)
+  )
 }
 
 /** パスワードの最短の文字数（サーバーの server/memberAuth.ts と同じ） */
@@ -111,6 +121,9 @@ export const AUTH_MESSAGES = {
   sessionExpired: 'ログインの期限が切れました。ログインし直してください',
   sessionCheckFailed: 'ログインの状態を確かめられませんでした',
   forbidden: 'このページからは受け付けられませんでした。ページを読み込み直してください',
+  wrongPassword: 'パスワードが違います',
+  emptyCurrentPassword: 'パスワードを入力してください',
+  accountDeleted: '退会しました。ご利用ありがとうございました',
 } as const
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/

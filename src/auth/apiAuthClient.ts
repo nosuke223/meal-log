@@ -16,6 +16,10 @@ const MESSAGES_BY_CODE: Record<string, string> = {
   TOO_MANY_REQUESTS: AUTH_MESSAGES.tooManyRequests,
   // メールを送る回数の上限（server/memberAuth.ts）
   TOO_MANY_MAIL_REQUESTS: AUTH_MESSAGES.tooManyMails,
+  // 退会のパスワードが違う、またはない
+  INVALID_PASSWORD: AUTH_MESSAGES.wrongPassword,
+  // 退会のときに、ログインしていない（server/memberAuth.ts）
+  UNAUTHORIZED: AUTH_MESSAGES.sessionExpired,
 }
 
 /** サーバーのログインの API を呼ぶ窓口を作る */
@@ -76,6 +80,11 @@ export function createApiAuthClient(options: ApiAuthClientOptions = {}): AuthCli
     async resetPassword(token, newPassword) {
       // トークンは本文に入れる（アドレスのクエリに入れると、サーバーの記録に残る）
       await call('POST', '/reset-password', { token, newPassword })
+    },
+
+    async deleteAccount(password) {
+      // 成功すると、サーバーがログインの cookie を消す
+      await call('POST', '/delete-user', { password })
     },
   }
 }

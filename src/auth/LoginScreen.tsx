@@ -23,6 +23,7 @@ const NOTICES: Record<LoginNotice, { message: string; failed: boolean; resend: b
   'link-invalid': { message: AUTH_MESSAGES.linkInvalid, failed: true, resend: true },
   'link-error': { message: AUTH_MESSAGES.linkError, failed: true, resend: false },
   'session-expired': { message: AUTH_MESSAGES.sessionExpired, failed: true, resend: false },
+  'account-deleted': { message: AUTH_MESSAGES.accountDeleted, failed: false, resend: false },
 }
 
 /** ログインの画面 */
