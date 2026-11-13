@@ -2,7 +2,7 @@ import { fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import App from '../App'
 import { renderApp } from '../renderApp'
-import { MEAL_STORAGE_KEY } from '../meals/localStorageMealRepository'
+import { MEAL_STORAGE_KEY, createLocalStorageMealRepository } from '../meals/localStorageMealRepository'
 import type { MealRecord } from '../meals/mealRecord'
 
 const TODAY = '2026-11-06'
@@ -220,6 +220,20 @@ describe('読み込み', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('取り込めませんでした（データは元のままです）')
     expect(window.localStorage.getItem(MEAL_STORAGE_KEY)).toBe(before)
+  })
+
+  test('無料のプランの上限を超えるときは、何も取り込まず、上限のエラーを表示する', async () => {
+    seed(existing)
+    window.history.replaceState(null, '', '/#/data')
+    await renderApp(<App today={TODAY} repository={createLocalStorageMealRepository({ recordLimit: 3 })} />)
+    selectFile(fileOf(file))
+    const confirm = await screen.findByRole('group', { name: '取り込みの確認' })
+    fireEvent.click(within(confirm).getByRole('button', { name: '取り込む' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '取り込めませんでした（データは元のままです）: 取り込むと、無料のプランの上限（3品）を超えます。取り込みは行われませんでした',
+    )
+    expect(storedRecords()).toEqual(existing)
   })
 
   test('取り込んだ後、記録の画面に取り込んだ記録が表示される', async () => {

@@ -1,5 +1,5 @@
 import { compareMealRecords, validateMealRecord, type MealRecord } from '../src/meals/mealRecord'
-import { MealNotFoundError, MealStorageError, type MealRepository } from '../src/meals/mealRepository'
+import { MealNotFoundError, MealStorageError, PlanLimitError, type MealRepository } from '../src/meals/mealRepository'
 import {
   assertDate,
   assertDateRange,
@@ -10,13 +10,17 @@ import {
   pickFields,
   validateImportRecords,
 } from '../src/meals/repositoryRules'
+import { FREE_PLAN_RECORD_LIMIT, createLimitMessage, importLimitMessage } from '../src/meals/plan'
 import type { D1Database } from './d1'
+import { readPlanUsage, recordLimitFor } from './memberPlan'
 
 export type D1MealRepositoryOptions = {
   /** 今の日時。テストで差し替える */
   now?: () => Date
   /** ID を作る。テストで差し替える */
   generateId?: () => string
+  /** 無料のプランで保存できる記録の数（追加と取り込みで確かめる）。省略すると FREE_PLAN_RECORD_LIMIT */
+  freePlanRecordLimit?: number
 }
 
 /**
@@ -53,6 +57,13 @@ export function createD1MealRepository(
 ): MealRepository {
   const now = options.now ?? (() => new Date())
   const generateId = options.generateId ?? (() => crypto.randomUUID())
+  const freePlanRecordLimit = options.freePlanRecordLimit ?? FREE_PLAN_RECORD_LIMIT
+
+  /** この会員の、保存できる記録の数（有料は null）と、今の記録の数 */
+  async function readLimit(): Promise<{ limit: number | null; count: number }> {
+    const usage = await withStorage('読み込めません', () => readPlanUsage(db, userId))
+    return { limit: recordLimitFor(usage.plan, freePlanRecordLimit), count: usage.count }
+  }
 
   async function selectRecords(where: string, ...values: unknown[]): Promise<MealRecord[]> {
     const result = await withStorage('読み込めません', () =>
@@ -69,6 +80,23 @@ export function createD1MealRepository(
       db.prepare(`SELECT ${COLUMNS} FROM member_meals WHERE user_id = ? AND id = ?`).bind(userId, id).first<MealRow>(),
     )
     return row === null ? null : toRecord(row)
+  }
+
+  /**
+   * 記録のうち、この会員がまだ持っていない ID の記録の数。記録は JSON の文字列にまとめて渡す
+   * （ID の数だけ変数を並べると、変数の個数の上限に当たるため）
+   */
+  async function countNewRecords(parts: MealRecord[][]): Promise<number> {
+    const statements = parts.map((part) =>
+      db
+        .prepare(
+          `SELECT COUNT(*) AS added FROM json_each(?2) AS r
+           WHERE NOT EXISTS (SELECT 1 FROM member_meals WHERE user_id = ?1 AND id = json_extract(r.value, '$.id'))`,
+        )
+        .bind(userId, JSON.stringify(part)),
+    )
+    const results = await withStorage('読み込めません', () => db.batch<{ added: number }>(statements))
+    return results.reduce((sum, result) => sum + Number(result.results[0]?.added ?? 0), 0)
   }
 
   return {
@@ -96,6 +124,7 @@ export function createD1MealRepository(
         status: input.status,
       })
       const id = generateId()
+      let { limit } = await readLimit()
       for (let attempt = 0; attempt < MAX_WRITE_ATTEMPTS; attempt++) {
         // 同じミリ秒に続けて作っても作った順に並ぶよう、その人の保存済みのどの記録の作成日時よりも後にする
         const latest = await withStorage('読み込めません', () =>
@@ -107,19 +136,28 @@ export function createD1MealRepository(
         const timestamp = createdAtFor(now(), latest?.latest ?? null)
         const record: MealRecord = { id, ...fields, createdAt: timestamp, updatedAt: timestamp }
         // 読んでから書くまでの間に、同じ人の別の作成が割り込んで、この作成日時以降の記録ができていたら書かない
-        // （確かめるのと書くのを1つの文で行うので、間に他の書き込みは入らない）。
+        // 無料のプランの上限（?11。有料は NULL）に達していても書かない
+        // （確かめるのと書くのを1つの文で行うので、間に他の書き込みは入らない。同時に追加されても上限を超えない）。
         // ID が重なったときは、主キーの制約で失敗する（MealStorageError）
         const result = await withStorage('書き込めません', () =>
           db
             .prepare(
               `INSERT INTO member_meals (user_id, ${COLUMNS})
                SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10
-               WHERE NOT EXISTS (SELECT 1 FROM member_meals WHERE user_id = ?1 AND created_at >= ?9)`,
+               WHERE NOT EXISTS (SELECT 1 FROM member_meals WHERE user_id = ?1 AND created_at >= ?9)
+                 AND (?11 IS NULL OR (SELECT COUNT(*) FROM member_meals WHERE user_id = ?1) < ?11)`,
             )
-            .bind(userId, ...toValues(record))
+            .bind(userId, ...toValues(record), limit)
             .run(),
         )
         if (result.meta.changes > 0) return record
+        // 書かなかった。上限に達していたなら、やり直さずに上限のエラーにする。
+        // 達していなければ、作成日時が割り込まれたので、作成日時を付け直してやり直す
+        const current = await readLimit()
+        limit = current.limit
+        if (limit !== null && current.count >= limit) {
+          throw new PlanLimitError(createLimitMessage(limit), { limit, count: current.count })
+        }
       }
       throw conflictError()
     },
@@ -220,7 +258,18 @@ export function createD1MealRepository(
       // 書き込む前にすべて検査する（1件でも不正なら何も書き込まない）
       const incoming = validateImportRecords(input)
       if (incoming.length === 0) return
-      const statements = chunk(incoming, RECORDS_PER_STATEMENT).map((part) =>
+      const parts = chunk(incoming, RECORDS_PER_STATEMENT)
+      // 無料のプランなら、取り込んだ後の記録の数（今の数 + 今ない ID の記録の数）が上限を超えないかを、書く前に確かめる。
+      // 今ある ID の記録は上書きなので数が増えない（上書きだけなら、上限を超えていても取り込む）。
+      // 同時に何回も取り込まれたときに上限を超えることは、今は防がない
+      const { limit, count } = await readLimit()
+      if (limit !== null) {
+        const added = await countNewRecords(parts)
+        if (added > 0 && count + added > limit) {
+          throw new PlanLimitError(importLimitMessage(limit), { limit, count })
+        }
+      }
+      const statements = parts.map((part) =>
         db
           .prepare(
             // 「WHERE true」は、SQLite で INSERT ... SELECT と ON CONFLICT を一緒に書くときに必要

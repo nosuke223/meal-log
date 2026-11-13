@@ -1,6 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { expect, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 import App from '../App'
+import { createLocalStorageMealRepository } from '../meals/localStorageMealRepository'
+import { LoginExpiredError } from '../meals/mealRepository'
+import { createMemoryPlanClient } from '../plan/memoryPlanClient'
 import { renderApp } from '../renderApp'
 import { AUTH_MESSAGES, AuthError } from './authClient'
 import { createMemoryAuthClient } from './memoryAuthClient'
@@ -521,4 +524,55 @@ test('ログインの状態を読み込めないときは、アカウントの�
 
   expect(await screen.findByRole('alert')).toHaveTextContent(`ログインの状態を読み込めませんでした: ${AUTH_MESSAGES.connectionFailed}`)
   expect(screen.queryByRole('button', { name: 'ログアウト' })).not.toBeInTheDocument()
+})
+
+describe('アカウントの画面のプラン', () => {
+  function signedIn() {
+    return createMemoryAuthClient({ signedInAs: 'alice@example.com' })
+  }
+
+  test('無料のプランなら、記録の数と上限（プランの窓口の limit）を出す', async () => {
+    const repository = createLocalStorageMealRepository()
+    await repository.create({ date: TODAY, mealType: 'lunch', name: 'うどん', status: 'eaten' })
+    await repository.create({ date: TODAY, mealType: 'dinner', name: 'カレー', status: 'planned' })
+    open('#/account')
+    render(<App today={TODAY} authClient={signedIn()} planClient={createMemoryPlanClient({ limit: 3, repository })} />)
+
+    expect(await screen.findByText('プラン: 無料（記録 2 / 3 品）')).toBeInTheDocument()
+  })
+
+  test('有料のプランなら、記録の数と「上限なし」を出す', async () => {
+    open('#/account')
+    render(<App today={TODAY} authClient={signedIn()} planClient={createMemoryPlanClient({ plan: 'paid' })} />)
+
+    expect(await screen.findByText('プラン: 有料（記録 0 品。上限なし）')).toBeInTheDocument()
+  })
+
+  test('プランだけを読み込めなかったときは、エラーを出し、メールアドレスとログアウトは使える', async () => {
+    const authClient = createMemoryAuthClient()
+    await authClient.signUp('alice@example.com', PASSWORD)
+    authClient.verify('alice@example.com')
+    await authClient.signIn('alice@example.com', PASSWORD)
+    const planClient = createMemoryPlanClient()
+    planClient.failNext(new Error('サーバーでエラーが起きました（500）'))
+    open('#/account')
+    render(<App today={TODAY} authClient={authClient} planClient={planClient} />)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('プランを読み込めませんでした: サーバーでエラーが起きました（500）')
+    expect(screen.getByText('alice@example.com')).toBeInTheDocument()
+    expect(screen.queryByText(/プラン: /)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'ログアウト' }))
+    expect(await screen.findByRole('form', { name: 'ログイン' })).toBeInTheDocument()
+    expect(await authClient.getSession()).toBeNull()
+  })
+
+  test('プランを読むときにログインの期限が切れていたら、ログインの画面にする', async () => {
+    const planClient = createMemoryPlanClient()
+    planClient.failNext(new LoginExpiredError('ログインの期限が切れました。ログインし直してください'))
+    open('#/account')
+    render(<App today={TODAY} authClient={signedIn()} planClient={planClient} />)
+
+    expect(await screen.findByRole('form', { name: 'ログイン' })).toBeInTheDocument()
+  })
 })

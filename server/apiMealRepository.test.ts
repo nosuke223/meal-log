@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { createApiMealRepository, LOGIN_EXPIRED_MESSAGE } from '../src/meals/apiMealRepository'
 import { MealValidationError, type MealRecord } from '../src/meals/mealRecord'
-import { LoginExpiredError, MealNotFoundError, type MealRepository } from '../src/meals/mealRepository'
-import { createApiHandler } from './api'
+import { LoginExpiredError, MealNotFoundError, PlanLimitError, type MealRepository } from '../src/meals/mealRepository'
+import { createApiPlanClient } from '../src/plan/apiPlanClient'
+import { createApiHandler, type ApiEnv } from './api'
 import { createMemoryTransport } from './mail/mailer'
 import { startTestDatabase, type TestDatabase } from './testDatabase'
 import { createTestMember, signInTestMember, testEnv, type TestMember } from './testMember'
@@ -43,13 +44,20 @@ function signUp(email: string): Promise<TestMember> {
 /**
  * API の処理を直接呼ぶ fetch で、この会員の窓口を作る（ブラウザと同じく、ログインの cookie を付けて呼ぶ）
  */
-function repositoryAs(member: TestMember, handle = createApiHandler({ now: createClock() })): MealRepository {
-  const fetch: typeof globalThis.fetch = async (input, init) => {
+function repositoryAs(member: TestMember, handle = createApiHandler({ now: createClock() }), env: Partial<ApiEnv> = {}): MealRepository {
+  return createApiMealRepository({ fetch: fetchAs(member, handle, env) })
+}
+
+/** API の処理を直接呼ぶ、この会員の fetch（env は足す環境変数） */
+function fetchAs(member: TestMember, handle: ReturnType<typeof createApiHandler>, env: Partial<ApiEnv> = {}): typeof globalThis.fetch {
+  return async (input, init) => {
     const headers = new Headers(init?.headers)
     headers.set('Cookie', member.cookie)
-    return handle(new Request(new URL(String(input), 'https://meal-log.example'), { ...init, headers }), testEnv(database.db))
+    return handle(new Request(new URL(String(input), 'https://meal-log.example'), { ...init, headers }), {
+      ...testEnv(database.db),
+      ...env,
+    })
   }
-  return createApiMealRepository({ fetch })
 }
 
 const IMPORTED: MealRecord = {
@@ -157,5 +165,49 @@ describe('サーバー版の窓口', () => {
     const repository = repositoryAs({ id: 'none', email: 'none@example.com', cookie: 'better-auth.session_token=broken' })
     await expect(repository.listAll()).rejects.toBeInstanceOf(LoginExpiredError)
     await expect(repository.listAll()).rejects.toThrow(LOGIN_EXPIRED_MESSAGE)
+  })
+
+  it('無料のプランの上限に達したら、追加も取り込みも PlanLimitError で、何も保存しない', async () => {
+    const env = { FREE_PLAN_RECORD_LIMIT: '1' }
+    const repository = repositoryAs(await signUp('alice@example.com'), createApiHandler({ now: createClock() }), env)
+    const created = await repository.create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', status: 'eaten' })
+
+    const createError = await repository
+      .create({ date: '2026-11-06', mealType: 'dinner', name: '鍋', status: 'eaten' })
+      .catch((caught: unknown) => caught)
+    expect(createError).toBeInstanceOf(PlanLimitError)
+    expect(createError).toMatchObject({
+      message: '無料のプランで保存できる記録は1品までです。有料のプランにすると、上限がなくなります（有料のプランは準備中です）',
+      limit: 1,
+      count: 1,
+    })
+    const importError = await repository.importRecords([IMPORTED]).catch((caught: unknown) => caught)
+    expect(importError).toBeInstanceOf(PlanLimitError)
+    expect((importError as Error).message).toBe('取り込むと、無料のプランの上限（1品）を超えます。取り込みは行われませんでした')
+    expect(await repository.listAll()).toEqual([created])
+  })
+})
+
+describe('サーバー版のプランの窓口', () => {
+  it('プラン、上限（環境変数に合わせる）、記録の数を読める', async () => {
+    const alice = await signUp('alice@example.com')
+    const handle = createApiHandler({ now: createClock() })
+    const env = { FREE_PLAN_RECORD_LIMIT: '3' }
+    await repositoryAs(alice, handle, env).create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', status: 'eaten' })
+    const planClient = createApiPlanClient({ fetch: fetchAs(alice, handle, env) })
+
+    expect(await planClient.getPlan()).toEqual({ plan: 'free', limit: 3, count: 1 })
+    await database.db
+      .prepare("INSERT INTO member_plans (user_id, plan, updated_at) VALUES (?, 'paid', '2026-11-06T00:00:00.000Z')")
+      .bind(alice.id)
+      .run()
+    expect(await planClient.getPlan()).toEqual({ plan: 'paid', limit: null, count: 1 })
+  })
+
+  it('ログインの期限が切れたとき（401）は、LoginExpiredError', async () => {
+    const planClient = createApiPlanClient({
+      fetch: fetchAs({ id: 'none', email: 'none@example.com', cookie: 'better-auth.session_token=broken' }, createApiHandler()),
+    })
+    await expect(planClient.getPlan()).rejects.toBeInstanceOf(LoginExpiredError)
   })
 })

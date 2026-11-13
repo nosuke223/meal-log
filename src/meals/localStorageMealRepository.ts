@@ -1,5 +1,6 @@
 import { compareMealRecords, validateMealFields, type MealRecord } from './mealRecord'
-import { MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
+import { MealNotFoundError, MealStorageError, PlanLimitError, type MealRepository } from './mealRepository'
+import { createLimitMessage, importLimitMessage } from './plan'
 import {
   assertDate,
   assertDateRange,
@@ -29,6 +30,11 @@ export type LocalStorageMealRepositoryOptions = {
   now?: () => Date
   /** ID を作る。テストで差し替える */
   generateId?: () => string
+  /**
+   * 保存できる記録の数（無料のプランの上限の代わり。画面のテストで、上限のエラーの表示を確かめる）。
+   * 超えるときは、追加と取り込みが PlanLimitError になる。省略すると上限なし
+   */
+  recordLimit?: number | null
 }
 
 /** ブラウザ内（localStorage）に保存する窓口を作る */
@@ -40,6 +46,7 @@ export function createLocalStorageMealRepository(
   const getStorage = () => options.storage ?? window.localStorage
   const now = options.now ?? (() => new Date())
   const generateId = options.generateId ?? (() => crypto.randomUUID())
+  const recordLimit = options.recordLimit ?? null
 
   function load(): MealRecord[] {
     const raw = withStorage('読み込めません', (storage) => storage.getItem(MEAL_STORAGE_KEY))
@@ -84,6 +91,9 @@ export function createLocalStorageMealRepository(
 
     async create(input) {
       const records = load()
+      if (recordLimit !== null && records.length >= recordLimit) {
+        throw new PlanLimitError(createLimitMessage(recordLimit), { limit: recordLimit, count: records.length })
+      }
       const fields = normalizeFields({
         date: input.date,
         mealType: input.mealType,
@@ -159,6 +169,12 @@ export function createLocalStorageMealRepository(
       // 書き込む前にすべて検査する（1件でも不正なら何も書き込まない）
       const incoming = validateImportRecords(input)
       const byId = new Map(load().map((record) => [record.id, record]))
+      // 取り込んだ後の数が上限を超えるなら、何も取り込まない（今ある ID の上書きだけなら、上限を超えていても取り込む）
+      const count = byId.size
+      const added = incoming.filter((record) => !byId.has(record.id)).length
+      if (recordLimit !== null && added > 0 && count + added > recordLimit) {
+        throw new PlanLimitError(importLimitMessage(recordLimit), { limit: recordLimit, count })
+      }
       for (const record of incoming) byId.set(record.id, record)
       // 1回の書き込みで保存するので、失敗したときは保存データは元のまま
       if (incoming.length > 0) save([...byId.values()])

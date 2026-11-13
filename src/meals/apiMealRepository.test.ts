@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CONNECTION_FAILED_MESSAGE, createApiMealRepository, LOGIN_EXPIRED_MESSAGE } from './apiMealRepository'
 import { MealValidationError, type MealRecord } from './mealRecord'
-import { LoginExpiredError, MealNotFoundError, MealStorageError, type MealRepository } from './mealRepository'
+import { LoginExpiredError, MealNotFoundError, MealStorageError, PlanLimitError, type MealRepository } from './mealRepository'
 
 // サーバーの API の呼び方と、応答の扱いを、fetch を差し替えて確かめる。
 // 実際の API（server/api.ts）とつないだ確認は server/apiMealRepository.test.ts にある
@@ -177,6 +177,33 @@ describe('エラー', () => {
     await expect(repository.update('x', { name: 'そば' })).rejects.toThrow(new MealNotFoundError('x'))
     await expect(repository.delete('x')).rejects.toBeInstanceOf(MealNotFoundError)
     await expect(repository.get('x')).resolves.toBeNull()
+  })
+
+  it('上限の 403（PlanLimitExceeded）は、追加でも取り込みでも PlanLimitError（メッセージ、上限、数はサーバーのもの）', async () => {
+    const message = '無料のプランで保存できる記録は300品までです。有料のプランにすると、上限がなくなります（有料のプランは準備中です）'
+    const { repository } = repositoryWith(() =>
+      jsonResponse(403, { error: { type: 'PlanLimitExceeded', message, limit: 300, count: 300 } }),
+    )
+    for (const run of [
+      () => repository.create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', status: 'eaten' }),
+      () => repository.importRecords([RECORD]),
+    ]) {
+      const error = await run().catch((caught: unknown) => caught)
+      expect(error).toBeInstanceOf(PlanLimitError)
+      expect(error).not.toBeInstanceOf(MealStorageError)
+      expect((error as PlanLimitError).message).toBe(message)
+      expect((error as PlanLimitError).limit).toBe(300)
+      expect((error as PlanLimitError).count).toBe(300)
+    }
+  })
+
+  it('他のオリジンからの書き込みの拒否の 403（Forbidden）は、上限ではなく MealStorageError', async () => {
+    const { repository } = repositoryWith(() => errorResponse(403, 'Forbidden', '他のサイトからの書き込みは受け付けません'))
+    const error = await repository
+      .create({ date: '2026-11-06', mealType: 'lunch', name: 'うどん', status: 'eaten' })
+      .catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(MealStorageError)
+    expect(error).not.toBeInstanceOf(PlanLimitError)
   })
 
   it('ない API のアドレスの 404 は、記録がないのではなく MealStorageError', async () => {

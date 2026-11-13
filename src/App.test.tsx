@@ -510,6 +510,35 @@ describe('保存の後の読み直しだけに失敗したとき', () => {
     expect(storedRecords()).toEqual([])
   })
 
+  test('無料のプランの上限で追加できないときは、上限のメッセージを表示し、入力中の品名を残す。削除すると追加できる', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    seed([
+      { id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'eaten' },
+      { id: 'b', date: '2026-11-05', mealType: 'dinner', name: 'カレー', status: 'eaten' },
+    ])
+    await renderApp(<App today={TODAY} repository={createLocalStorageMealRepository({ recordLimit: 2 })} />)
+    const lunch = within(section('昼'))
+    fireEvent.change(lunch.getByRole('textbox', { name: '新しい品名' }), { target: { value: 'うどん' } })
+    fireEvent.click(lunch.getByRole('button', { name: '追加' }))
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '保存できませんでした: 無料のプランで保存できる記録は2品までです。有料のプランにすると、上限がなくなります（有料のプランは準備中です）',
+      )
+    })
+    expect(lunch.getByRole('textbox', { name: '新しい品名' })).toHaveValue('うどん')
+    expect(storedRecords()).toHaveLength(2)
+
+    const form = await openEditForm('朝', 'ごはん')
+    fireEvent.click(form.getByRole('button', { name: '削除' }))
+    await vi.waitFor(() => {
+      expect(within(section('朝')).queryByRole('button', { name: /ごはん/ })).not.toBeInTheDocument()
+    })
+    fireEvent.click(lunch.getByRole('button', { name: '追加' }))
+    expect(await lunch.findByRole('button', { name: /うどん/ })).toBeInTheDocument()
+    expect(storedRecords().map((record) => record.name)).toEqual(['カレー', 'うどん'])
+  })
+
   test('変更の保存そのものに失敗したときは、「保存できませんでした」と表示し、変更の欄を残す', async () => {
     seed([{ id: 'a', date: TODAY, mealType: 'breakfast', name: 'ごはん', status: 'planned' }])
     const { repository } = setUpRepository()

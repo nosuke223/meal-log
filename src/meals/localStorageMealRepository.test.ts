@@ -5,7 +5,7 @@ import {
   MEAL_STORAGE_VERSION,
 } from './localStorageMealRepository'
 import { MealValidationError, toLocalDateString, type MealInput, type MealRecord } from './mealRecord'
-import { MealNotFoundError, MealStorageError } from './mealRepository'
+import { MealNotFoundError, MealStorageError, PlanLimitError } from './mealRepository'
 
 /** 呼ぶたびに1秒進む時計 */
 function createClock(start = '2026-11-06T00:00:00.000Z') {
@@ -591,6 +591,67 @@ describe('全件の取得と一括取り込み', () => {
     await expect(repository.listAll()).rejects.toThrow(MealStorageError)
     await expect(repository.importRecords([imported()])).rejects.toThrow(MealStorageError)
     expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe('{broken')
+  })
+})
+
+describe('記録の数の上限（画面のテスト用）', () => {
+  function createLimited(recordLimit: number) {
+    return createLocalStorageMealRepository({ storage: localStorage, now: createClock(), recordLimit })
+  }
+
+  function record(id: string): MealRecord {
+    return {
+      id,
+      date: '2026-10-01',
+      mealType: 'dinner',
+      name: 'カレー',
+      genre: null,
+      dishType: null,
+      status: 'eaten',
+      createdAt: '2026-10-01T10:00:00.000Z',
+      updatedAt: '2026-10-01T10:00:00.000Z',
+    }
+  }
+
+  it('上限に達したら、追加は PlanLimitError で、何も保存しない。消すと追加できる', async () => {
+    const repository = createLimited(2)
+    const first = await repository.create(base)
+    await repository.create(base)
+    const before = localStorage.getItem(MEAL_STORAGE_KEY)
+
+    const error = await repository.create(base).catch((caught: unknown) => caught)
+    expect(error).toBeInstanceOf(PlanLimitError)
+    expect(error).toMatchObject({
+      message: '無料のプランで保存できる記録は2品までです。有料のプランにすると、上限がなくなります（有料のプランは準備中です）',
+      limit: 2,
+      count: 2,
+    })
+    expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe(before)
+
+    await repository.delete(first.id)
+    await expect(repository.create(base)).resolves.toMatchObject({ name: 'ご飯' })
+  })
+
+  it('取り込みは、取り込んだ後の数が上限を超えるなら全体を拒否し、ちょうど上限まで、または上書きだけなら取り込む', async () => {
+    const repository = createLimited(3)
+    await repository.importRecords([record('a'), record('b')])
+    const before = localStorage.getItem(MEAL_STORAGE_KEY)
+
+    await expect(repository.importRecords([{ ...record('a'), name: '上書き' }, record('c'), record('d')])).rejects.toThrow(
+      new PlanLimitError('取り込むと、無料のプランの上限（3品）を超えます。取り込みは行われませんでした', { limit: 3, count: 2 }),
+    )
+    expect(localStorage.getItem(MEAL_STORAGE_KEY)).toBe(before)
+
+    await repository.importRecords([record('c')])
+    expect(await repository.listAll()).toHaveLength(3)
+    await repository.importRecords([{ ...record('a'), name: '上書き' }])
+    expect((await repository.get('a'))?.name).toBe('上書き')
+  })
+
+  it('上限を指定しなければ、上限なし', async () => {
+    const repository = createRepository()
+    await repository.importRecords(Array.from({ length: 400 }, (_, index) => record(`r${index}`)))
+    await expect(repository.create(base)).resolves.toBeDefined()
   })
 })
 

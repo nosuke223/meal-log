@@ -12,7 +12,7 @@ export interface MealRepository {
   listByDateRange(from: string, to: string): Promise<MealRecord[]>
   /** 1件取得する。なければ null */
   get(id: string): Promise<MealRecord | null>
-  /** 作成する。ID と作成・更新の日時は窓口が付ける */
+  /** 作成する。ID と作成・更新の日時は窓口が付ける。無料のプランの上限に達していたら PlanLimitError */
   create(input: MealInput): Promise<MealRecord>
   /** 渡した項目だけを更新する。updatedAt は変わり、createdAt は変わらない */
   update(id: string, changes: MealChanges): Promise<MealRecord>
@@ -28,7 +28,9 @@ export interface MealRepository {
   /**
    * 記録を、ID と作成・更新の日時を保ったまま一括で保存する（読み込み用）。
    * 同じ ID の記録があれば渡した記録で置き換え、なければ追加する。渡していない記録は変えない。
-   * 全部保存するか、何も保存しないかのどちらか（1件でも不正、または保存に失敗したら、保存データは元のまま）
+   * 全部保存するか、何も保存しないかのどちらか（1件でも不正、または保存に失敗したら、保存データは元のまま）。
+   * 取り込んだ後の記録の数が無料のプランの上限を超えるなら、何も保存せず PlanLimitError
+   * （今ない ID の記録がなく、上書きだけなら、上限を超えていても保存する）
    */
   importRecords(records: MealRecord[]): Promise<void>
 }
@@ -46,6 +48,23 @@ export class MealStorageError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options)
     this.name = 'MealStorageError'
+  }
+}
+
+/**
+ * 無料のプランの記録の上限に達していて、追加や取り込みができないときのエラー（何も保存していない）。
+ * message は、画面にそのまま出す文（サーバーの窓口では、サーバーが返した文）
+ */
+export class PlanLimitError extends Error {
+  /** 保存できる記録の数と、今の記録の数（わからないときは null） */
+  readonly limit: number | null
+  readonly count: number | null
+
+  constructor(message: string, details: { limit: number; count: number } | null = null) {
+    super(message)
+    this.name = 'PlanLimitError'
+    this.limit = details?.limit ?? null
+    this.count = details?.count ?? null
   }
 }
 

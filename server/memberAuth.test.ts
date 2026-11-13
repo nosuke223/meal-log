@@ -989,6 +989,7 @@ describe('記録の API の認証（ログインの cookie）', () => {
       ['DELETE', '/api/meal?id=a', undefined],
       ['POST', '/api/import', { records: [] }],
       ['POST', '/api/mark-planned-as-eaten', { date: '2026-11-11' }],
+      ['GET', '/api/plan', undefined],
     ] as const) {
       expectUnauthorized(await call(method, path, { cookie, body }))
     }

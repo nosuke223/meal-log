@@ -10,6 +10,8 @@ import { CalendarScreen } from './calendar/CalendarScreen'
 import { createDefaultMealRepository } from './meals/defaultMealRepository'
 import { LoginExpiredError, type MealRepository } from './meals/mealRepository'
 import { DataScreen } from './data/DataScreen'
+import { createDefaultPlanClient } from './plan/defaultPlanClient'
+import type { PlanClient } from './plan/planClient'
 import {
   accountHash,
   calendarDateHash,
@@ -32,6 +34,8 @@ type Props = {
   repository?: MealRepository
   /** ログインの窓口。省略するとサーバーのログインの API を使う */
   authClient?: AuthClient
+  /** プランの窓口。省略するとサーバーの API（GET /api/plan）を使う */
+  planClient?: PlanClient
   /** 今日として扱う日（YYYY-MM-DD）。省略すると端末の現地の今日 */
   today?: string
 }
@@ -83,7 +87,7 @@ function watchLoginExpiry(repository: MealRepository, onExpired: () => void): Me
   }
 }
 
-function App({ repository, authClient: givenAuthClient, today: fixedToday }: Props) {
+function App({ repository, authClient: givenAuthClient, planClient: givenPlanClient, today: fixedToday }: Props) {
   const [session, setSession] = useState<Session>({ kind: 'unknown' })
   // 日が過ぎた予定を「食べた」にできなかったときのエラー
   const [autoUpdateError, setAutoUpdateError] = useState<string | null>(null)
@@ -95,6 +99,7 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     }),
   )
   const [authClient] = useState(() => givenAuthClient ?? createDefaultAuthClient())
+  const [planClient] = useState(() => givenPlanClient ?? createDefaultPlanClient())
   const today = useToday(fixedToday)
   const [hash, setHash] = useState(() => window.location.hash)
   // 再設定のメールのリンクのトークン（メモリーにだけ持つ。読み込み直すと消える）
@@ -319,6 +324,7 @@ function App({ repository, authClient: givenAuthClient, today: fixedToday }: Pro
     return (
       <AccountScreen
         authClient={authClient}
+        planClient={planClient}
         // アカウントの画面は、画面の中で確かめたログインの状態で、「記録の画面へ」を出すかを決める
         onBack={backToToday}
         onSignedIn={signedIn}
