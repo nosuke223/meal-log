@@ -3,6 +3,7 @@ import { LoginExpiredError } from '../meals/mealRepository'
 import type { PlanStatus } from '../meals/plan'
 import type { PlanClient } from '../plan/planClient'
 import { AuthError, type AuthClient, type Member } from './authClient'
+import { DeleteAccountSection } from './DeleteAccountSection'
 import { LoginScreen } from './LoginScreen'
 
 type Props = {
@@ -12,6 +13,8 @@ type Props = {
   onSignedIn: (member: Member) => void
   /** ログアウトしたとき */
   onSignedOut: () => void
+  /** 退会したとき */
+  onDeleted: () => void
   onOpenSignup: () => void
   onOpenForgot: () => void
   onBack: () => void
@@ -37,7 +40,7 @@ function planText(status: PlanStatus): string {
 }
 
 /**
- * アカウントの画面。ログイン中のメールアドレス、プランと記録の数、「ログアウト」を出す。
+ * アカウントの画面。ログイン中のメールアドレス、プランと記録の数、「ログアウト」、「退会」を出す。
  * ログインしていなければ、ログインの画面を出す
  */
 export function AccountScreen({
@@ -45,6 +48,7 @@ export function AccountScreen({
   planClient,
   onSignedIn,
   onSignedOut,
+  onDeleted,
   onOpenSignup,
   onOpenForgot,
   onBack,
@@ -163,6 +167,7 @@ export function AccountScreen({
           </button>
         </section>
       )}
+      {state.kind === 'signedIn' && <DeleteAccountSection authClient={authClient} onDeleted={onDeleted} />}
     </main>
   )
 }

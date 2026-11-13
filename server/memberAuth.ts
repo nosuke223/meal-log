@@ -63,7 +63,30 @@ export const AUTH_RATE_LIMITS = {
   '/send-verification-email': { window: 600, max: 10 },
   '/request-password-reset': { window: 600, max: 10 },
   '/reset-password': { window: 600, max: 10 },
+  // 退会はパスワードを確かめるので、ログインと同じ上限にする
+  '/delete-user': { window: 600, max: 10 },
 } as const
+
+/** 退会の入口（Better Auth の user.deleteUser）。パスワードを必ず添える */
+const DELETE_USER_PATH = '/delete-user'
+
+/**
+ * 退会で消す文。その会員の記録、プラン、その会員に結びつく確認用の行（パスワードの再設定の途中のものなど。値が会員の ID）、
+ * ログインの状態、ログインの方法、会員の行。外部キーの ON DELETE CASCADE には頼らず、消す表を明示する
+ */
+export const DELETE_MEMBER_STATEMENTS = [
+  'DELETE FROM member_meals WHERE user_id = ?',
+  'DELETE FROM member_plans WHERE user_id = ?',
+  'DELETE FROM "verification" WHERE "value" = ?',
+  'DELETE FROM "session" WHERE "userId" = ?',
+  'DELETE FROM "account" WHERE "userId" = ?',
+  'DELETE FROM "user" WHERE "id" = ?',
+] as const
+
+/** 会員と、その会員の行を、1回の batch（1つのトランザクション）で消す。途中で失敗したら、何も消えない */
+export async function deleteMemberRows(db: D1Database, userId: string): Promise<void> {
+  await db.batch(DELETE_MEMBER_STATEMENTS.map((query) => db.prepare(query).bind(userId)))
+}
 
 /** 上記以外の /api/auth/ のアドレス（ログイン中かの確かめなど）の上限 */
 const DEFAULT_RATE_LIMIT = { window: 60, max: 100 }
@@ -183,6 +206,17 @@ export function memberAuthOptions(
         await sendMail(user.email, verifyEmailMail({ url: verifyEmailUrl(origin, token) }), request)
       },
     },
+    user: {
+      // 退会。パスワードがないリクエストは、Better Auth に渡す前に断る（handleAuthRequest）。
+      // 確認のメールを送る方式（sendDeleteAccountVerification）は使わない
+      deleteUser: {
+        enabled: true,
+        // 消すのはここの1回の batch。この後に Better Auth が消す文は、消す行が残っていないので何もしない
+        async beforeDelete(user) {
+          await deleteMemberRows(db, user.id)
+        },
+      },
+    },
     rateLimit: {
       enabled: true,
       storage: 'database',
@@ -264,11 +298,41 @@ export function createMemberAuth(options: MemberAuthHandlerOptions = {}) {
     return { id: user.id, email: user.email.toLowerCase() }
   }
 
+  /**
+   * 退会のリクエストを、Better Auth に渡す前に確かめる。断るときはその応答、渡してよいときは、本文をパスワードだけにしたリクエスト。
+   * 書き込みなので、同じオリジンの画面からのものだけを受け付ける。ログインしていない（メールアドレスの確認前を含む）ときは 401。
+   * Better Auth は、ログインして間もないセッションならパスワードなしでも消すので、パスワードがなければここで断る
+   */
+  async function checkDeleteUser(request: Request, env: MemberAuthEnv, db: D1Database): Promise<Request | Response> {
+    const url = new URL(request.url)
+    if (request.headers.get('Origin') !== url.origin) {
+      return jsonResponse(403, { code: 'INVALID_ORIGIN', message: 'Invalid origin' })
+    }
+    if ((await getMember(request, env, db)) === null) {
+      return jsonResponse(401, { code: 'UNAUTHORIZED', message: AUTH_MESSAGES.sessionExpired })
+    }
+    const password = (await readJson(request.clone()))?.password
+    if (typeof password !== 'string' || password === '') {
+      return jsonResponse(400, { code: 'INVALID_PASSWORD', message: AUTH_MESSAGES.wrongPassword })
+    }
+    // 確認のメールのトークン（token）などは渡さない
+    const headers = new Headers(request.headers)
+    headers.delete('Content-Length')
+    return new Request(request.url, { method: 'POST', headers, body: JSON.stringify({ password }) })
+  }
+
   async function handleAuthRequest(request: Request, env: MemberAuthEnv, db: D1Database): Promise<Response> {
     const auth = authFor(request, env, db)
     const url = new URL(request.url)
     const path = url.pathname.slice(AUTH_BASE_PATH.length)
     if (path === '/verify-email' && request.method === 'GET') return handleVerifyEmail(url, request, auth, db)
+    // 確認のメールで退会する方式は使わないので、そのリンクの入口は開けない
+    if (path.startsWith(`${DELETE_USER_PATH}/`)) return jsonResponse(404, { code: 'NOT_FOUND', message: 'Not found' })
+    if (path === DELETE_USER_PATH && request.method === 'POST') {
+      const checked = await checkDeleteUser(request, env, db)
+      if (checked instanceof Response) return checked
+      request = checked
+    }
     // Better Auth のオリジンの確認は、cookie のないリクエストには効かないので、再設定の入口は自分で確かめる
     if (RESET_PATHS.includes(path) && request.method === 'POST') {
       const requestOrigin = request.headers.get('Origin')
@@ -389,6 +453,14 @@ function mailErrorResponse(error: MailConfigurationError | MailSendError): Respo
   }
   return new Response(JSON.stringify(errorBody), {
     status: 500,
+    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+  })
+}
+
+/** Better Auth のエラーと同じ形（{ code, message }）の応答 */
+function jsonResponse(status: number, body: { code: string; message: string }): Response {
+  return new Response(JSON.stringify(body), {
+    status,
     headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
   })
 }
