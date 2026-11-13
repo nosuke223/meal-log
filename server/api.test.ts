@@ -139,6 +139,18 @@ function imported(overrides: Partial<MealRecord> = {}): MealRecord {
   }
 }
 
+/** 会員のプランを切り替える（docs/deploy.md の手順と同じ SQL） */
+async function setPlan(member: TestMember, plan: string) {
+  await database.db
+    .prepare(
+      `INSERT INTO member_plans (user_id, plan, updated_at)
+       VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+       ON CONFLICT (user_id) DO UPDATE SET plan = excluded.plan, updated_at = excluded.updated_at`,
+    )
+    .bind(member.id, plan)
+    .run()
+}
+
 describe('作成・取得・更新・削除', () => {
   it('作成すると 201 で ID と日時が付き、1件取得できる', async () => {
     const call = createClient()
@@ -673,6 +685,8 @@ describe('全件の取得と一括取り込み', () => {
 
   it('数百件を取り込める', async () => {
     const call = createClient()
+    // 無料のプランの上限（300品）を超える数なので、有料にする
+    await setPlan(alice, 'paid')
     const records = Array.from({ length: 500 }, (_, index) =>
       imported({ id: `r${String(index).padStart(3, '0')}`, name: `品${index}` }),
     )
@@ -881,18 +895,6 @@ describe('リクエストの形', () => {
 })
 
 describe('無料のプランの記録の上限', () => {
-  /** 会員のプランを切り替える（docs/deploy.md の手順と同じ SQL） */
-  async function setPlan(member: TestMember, plan: string) {
-    await database.db
-      .prepare(
-        `INSERT INTO member_plans (user_id, plan, updated_at)
-         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-         ON CONFLICT (user_id) DO UPDATE SET plan = excluded.plan, updated_at = excluded.updated_at`,
-      )
-      .bind(member.id, plan)
-      .run()
-  }
-
   /** count 件の記録を取り込む（ID は prefix と番号） */
   async function fill(call: ReturnType<typeof createClient>, count: number, options: { as?: TestMember; prefix?: string } = {}) {
     const records = Array.from({ length: count }, (_, index) =>
