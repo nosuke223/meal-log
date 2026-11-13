@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { MealRecord } from '../src/meals/mealRecord'
-import { createApiHandler } from './api'
+import { FREE_PLAN_RECORD_LIMIT } from '../src/meals/plan'
+import { createApiHandler, type ApiEnv } from './api'
 import type { D1Database, D1PreparedStatement } from './d1'
 import { createMemoryTransport } from './mail/mailer'
 import { overrideDatabase, startTestDatabase, type TestDatabase } from './testDatabase'
@@ -25,6 +26,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await database.db.prepare('DELETE FROM member_meals').run()
+  // 有料にした会員を、次のテストに残さない
+  await database.db.prepare('DELETE FROM member_plans').run()
   vi.restoreAllMocks()
 })
 
@@ -44,6 +47,8 @@ type CallOptions = {
   as?: TestMember
   headers?: Record<string, string>
   db?: D1Database
+  /** 足す環境変数（FREE_PLAN_RECORD_LIMIT など） */
+  env?: Partial<ApiEnv>
 }
 
 function createClient(handlerOptions: Parameters<typeof createApiHandler>[0] = { now: createClock() }) {
@@ -61,7 +66,7 @@ function createClient(handlerOptions: Parameters<typeof createApiHandler>[0] = {
       headers,
       body: options.body === undefined ? undefined : typeof options.body === 'string' ? options.body : JSON.stringify(options.body),
     })
-    const response = await handle(request, testEnv(options.db ?? database.db))
+    const response = await handle(request, { ...testEnv(options.db ?? database.db), ...options.env })
     const text = await response.text()
     return { status: response.status, headers: response.headers, body: text === '' ? null : JSON.parse(text) }
   }
@@ -875,6 +880,318 @@ describe('リクエストの形', () => {
   })
 })
 
+describe('無料のプランの記録の上限', () => {
+  /** 会員のプランを切り替える（docs/deploy.md の手順と同じ SQL） */
+  async function setPlan(member: TestMember, plan: string) {
+    await database.db
+      .prepare(
+        `INSERT INTO member_plans (user_id, plan, updated_at)
+         VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT (user_id) DO UPDATE SET plan = excluded.plan, updated_at = excluded.updated_at`,
+      )
+      .bind(member.id, plan)
+      .run()
+  }
+
+  /** count 件の記録を取り込む（ID は prefix と番号） */
+  async function fill(call: ReturnType<typeof createClient>, count: number, options: { as?: TestMember; prefix?: string } = {}) {
+    const records = Array.from({ length: count }, (_, index) =>
+      imported({ id: `${options.prefix ?? 'r'}${String(index).padStart(4, '0')}`, name: `品${index}` }),
+    )
+    expect((await call('POST', '/api/import', { as: options.as, body: { records } })).status).toBe(204)
+    return records
+  }
+
+  async function countOf(call: ReturnType<typeof createClient>, as: TestMember = alice): Promise<number> {
+    return (await call('GET', '/api/meals', { as })).body.meals.length
+  }
+
+  it('上限の定数は 300 品', () => {
+    expect(FREE_PLAN_RECORD_LIMIT).toBe(300)
+  })
+
+  it('無料の会員は、299品のとき追加でき、300品のとき追加できない（403。やり直さない）', async () => {
+    const call = createClient()
+    await fill(call, 299)
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(201)
+
+    let inserts = 0
+    const db = overrideDatabase(database.db, {
+      prepare: (query) => {
+        if (query.trimStart().startsWith('INSERT INTO member_meals')) inserts++
+        return database.db.prepare(query)
+      },
+    })
+    const rejected = await call('POST', '/api/meals', { db, body: { ...base, name: 'パン' } })
+    expect(rejected.status).toBe(403)
+    expect(rejected.body.error).toEqual({
+      type: 'PlanLimitExceeded',
+      message: '無料のプランで保存できる記録は300品までです。有料のプランにすると、上限がなくなります（有料のプランは準備中です）',
+      limit: 300,
+      count: 300,
+    })
+    expect(inserts).toBe(1)
+    expect(await countOf(call)).toBe(300)
+  })
+
+  it('有料の会員は、300品を超えて追加できる。無料に戻すと、記録は残り、追加できなくなる', async () => {
+    const call = createClient()
+    await fill(call, 300)
+    await setPlan(alice, 'paid')
+
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(201)
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(201)
+    expect((await call('GET', '/api/plan')).body).toEqual({ plan: 'paid', limit: null, count: 302 })
+
+    await setPlan(alice, 'free')
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(403)
+    expect((await call('GET', '/api/plan')).body).toEqual({ plan: 'free', limit: 300, count: 302 })
+    expect(await countOf(call)).toBe(302)
+  })
+
+  it('プランの行がない会員は無料。行を足すと有料になる', async () => {
+    const call = createClient()
+    expect((await call('GET', '/api/plan')).body).toEqual({ plan: 'free', limit: 300, count: 0 })
+
+    await setPlan(alice, 'paid')
+    expect((await call('GET', '/api/plan')).body).toEqual({ plan: 'paid', limit: null, count: 0 })
+    // ほかの会員は無料のまま
+    expect((await call('GET', '/api/plan', { as: bob })).body).toEqual({ plan: 'free', limit: 300, count: 0 })
+  })
+
+  it('プランは free と paid だけを保存できる', async () => {
+    await expect(setPlan(alice, 'gold')).rejects.toThrow()
+  })
+
+  it('GET /api/plan は、その会員の記録だけを数える（予定も数える）', async () => {
+    const call = createClient()
+    await call('POST', '/api/meals', { body: { ...base, status: 'planned' } })
+    await call('POST', '/api/meals', { body: base })
+    await fill(call, 5, { as: bob })
+
+    const response = await call('GET', '/api/plan')
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ plan: 'free', limit: 300, count: 2 })
+    expect((await call('GET', '/api/plan', { as: bob })).body).toEqual({ plan: 'free', limit: 300, count: 5 })
+  })
+
+  it('ほかの会員の記録は数に入らない', async () => {
+    const call = createClient()
+    await fill(call, 300, { as: bob })
+    await fill(call, 299)
+
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(201)
+    expect((await call('POST', '/api/meals', { as: bob, body: base })).status).toBe(403)
+    expect(await countOf(call)).toBe(300)
+    expect(await countOf(call, bob)).toBe(300)
+  })
+
+  describe('取り込み', () => {
+    it('取り込んだ後の総数が上限を超えるなら、全体を拒否し、何も取り込まない（上書きの記録も変えない）', async () => {
+      const call = createClient()
+      const existing = await fill(call, 290)
+      const before = (await call('GET', '/api/meals')).body.meals
+
+      const records = [
+        imported({ id: existing[0].id, name: '上書き' }),
+        ...Array.from({ length: 11 }, (_, index) => imported({ id: `new${index}` })),
+      ]
+      const response = await call('POST', '/api/import', { body: { records } })
+      expect(response.status).toBe(403)
+      expect(response.body.error).toEqual({
+        type: 'PlanLimitExceeded',
+        message: '取り込むと、無料のプランの上限（300品）を超えます。取り込みは行われませんでした',
+        limit: 300,
+        count: 290,
+      })
+      expect((await call('GET', '/api/meals')).body.meals).toEqual(before)
+    })
+
+    it('ちょうど上限までなら取り込める', async () => {
+      const call = createClient()
+      await fill(call, 290)
+
+      const records = Array.from({ length: 10 }, (_, index) => imported({ id: `new${index}` }))
+      expect((await call('POST', '/api/import', { body: { records } })).status).toBe(204)
+      expect(await countOf(call)).toBe(300)
+    })
+
+    it('今ある ID の上書きだけなら、上限に達していても、超えていても取り込める', async () => {
+      const call = createClient()
+      const existing = await fill(call, 300)
+      const replaced = existing.slice(0, 250).map((record) => ({ ...record, name: `上書き${record.id}` }))
+
+      expect((await call('POST', '/api/import', { body: { records: replaced } })).status).toBe(204)
+      expect((await call('GET', mealPath(existing[0].id))).body.meal.name).toBe(`上書き${existing[0].id}`)
+      expect(await countOf(call)).toBe(300)
+
+      // 有料のときに増やしてから無料に戻した（上限を超えている）会員も、上書きはできる
+      await setPlan(alice, 'paid')
+      await fill(call, 5, { prefix: 'extra' })
+      await setPlan(alice, 'free')
+      expect((await call('POST', '/api/import', { body: { records: [imported({ id: 'extra0000', name: '再上書き' })] } })).status).toBe(204)
+      expect((await call('GET', mealPath('extra0000'))).body.meal.name).toBe('再上書き')
+      expect(
+        (await call('POST', '/api/import', { body: { records: [imported({ id: 'brand-new' })] } })).status,
+      ).toBe(403)
+      expect(await countOf(call)).toBe(305)
+    })
+
+    it('ほかの会員と同じ ID の記録は、自分にとって新しい記録として数える', async () => {
+      const call = createClient()
+      await fill(call, 300, { as: bob })
+      await fill(call, 300)
+
+      // bob と同じ ID でも、alice の記録とは別なので、alice の分は上書きになる
+      expect((await call('POST', '/api/import', { body: { records: [imported({ id: 'r0000', name: 'x' })] } })).status).toBe(204)
+      await call('DELETE', mealPath('r0000'))
+      await call('DELETE', mealPath('r0001'))
+      // alice は 298 品。bob の ID の記録2件は、alice にとっては新しい記録
+      expect(
+        (await call('POST', '/api/import', { body: { records: [imported({ id: 'r0000' }), imported({ id: 'r0001' })] } }))
+          .status,
+      ).toBe(204)
+      expect(await countOf(call)).toBe(300)
+    })
+
+    it('有料の会員は、上限を超えて取り込める', async () => {
+      const call = createClient()
+      await setPlan(alice, 'paid')
+
+      await fill(call, 310)
+      expect(await countOf(call)).toBe(310)
+    })
+  })
+
+  it('上限を超えている会員も、一覧・取得・変更・削除・書き出し・予定の更新ができ、削除して上限を下回ると追加できる', async () => {
+    const call = createClient()
+    await setPlan(alice, 'paid')
+    const records = await fill(call, 300)
+    const planned = (await call('POST', '/api/meals', { body: { ...base, date: '2026-11-01', status: 'planned' } })).body
+      .meal as MealRecord
+    await setPlan(alice, 'free')
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(403)
+
+    expect((await call('GET', `/api/meals?date=${records[0].date}`)).body.meals).toHaveLength(300)
+    expect((await call('GET', '/api/meals?from=2026-10-01&to=2026-11-30')).body.meals).toHaveLength(301)
+    expect((await call('GET', mealPath(records[0].id))).status).toBe(200)
+    const patched = await call('PATCH', mealPath(records[0].id), {
+      body: { name: 'パン', date: '2026-10-02', mealType: 'lunch', status: 'planned' },
+    })
+    expect(patched.status).toBe(200)
+    expect((await call('POST', '/api/mark-planned-as-eaten', { body: { date: '2026-11-06' } })).body.meals).toHaveLength(2)
+    expect((await call('GET', mealPath(planned.id))).body.meal.status).toBe('eaten')
+    expect((await call('GET', '/api/meals')).body.meals).toHaveLength(301)
+
+    expect((await call('DELETE', mealPath(records[1].id))).status).toBe(204)
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(403)
+    expect((await call('DELETE', mealPath(records[2].id))).status).toBe(204)
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(201)
+    expect((await call('POST', '/api/meals', { body: base })).status).toBe(403)
+    expect(await countOf(call)).toBe(300)
+  })
+
+  describe('同時の追加', () => {
+    it('数えてから書くまでの間に別の追加が割り込んで上限に達したら、上限のエラーにして、上限を超えて保存しない', async () => {
+      const call = createClient()
+      const env = { FREE_PLAN_RECORD_LIMIT: '2' }
+      await fill(call, 1)
+      // 1つ目の追加が最も遅い作成日時を読んだ直後に、2つ目の追加を終わらせる
+      const db = interruptedDb('SELECT MAX(created_at)', () => call('POST', '/api/meals', { env, body: { ...base, name: '割り込み' } }))
+
+      const response = await call('POST', '/api/meals', { db, env, body: { ...base, name: '先に始めた' } })
+      expect(response.status).toBe(403)
+      expect(response.body.error).toMatchObject({ type: 'PlanLimitExceeded', limit: 2, count: 2 })
+      const names = (await call('GET', '/api/meals')).body.meals.map((record: MealRecord) => record.name)
+      expect(names).toHaveLength(2)
+      expect(names).toContain('割り込み')
+    })
+
+    it('同時に送っても、上限を超えて保存されない', async () => {
+      const call = createClient()
+      const env = { FREE_PLAN_RECORD_LIMIT: '3' }
+      await fill(call, 1)
+
+      const responses = await Promise.all(
+        Array.from({ length: 5 }, (_, index) => call('POST', '/api/meals', { env, body: { ...base, name: `品${index}` } })),
+      )
+      expect(responses.map((response) => response.status).sort()).toEqual([201, 201, 403, 403, 403])
+      expect(await countOf(call)).toBe(3)
+    })
+  })
+
+  describe('環境変数 FREE_PLAN_RECORD_LIMIT', () => {
+    /** 上限の環境変数についての警告の数（ほかの警告は数えない） */
+    function limitWarnings(warn: { mock: { calls: unknown[][] } }): number {
+      return warn.mock.calls.filter((args) => String(args[0]).includes('FREE_PLAN_RECORD_LIMIT')).length
+    }
+
+    it('1以上の整数なら、その数を上限にする（前後の空白は取る）', async () => {
+      const call = createClient()
+      const env = { FREE_PLAN_RECORD_LIMIT: ' 3 ' }
+      await fill(call, 2)
+
+      expect((await call('GET', '/api/plan', { env })).body).toEqual({ plan: 'free', limit: 3, count: 2 })
+      expect((await call('POST', '/api/meals', { env, body: base })).status).toBe(201)
+      const rejected = await call('POST', '/api/meals', { env, body: base })
+      expect(rejected.status).toBe(403)
+      expect(rejected.body.error).toEqual({
+        type: 'PlanLimitExceeded',
+        message: '無料のプランで保存できる記録は3品までです。有料のプランにすると、上限がなくなります（有料のプランは準備中です）',
+        limit: 3,
+        count: 3,
+      })
+      const importResponse = await call('POST', '/api/import', { env, body: { records: [imported({ id: 'x' })] } })
+      expect(importResponse.status).toBe(403)
+      expect(importResponse.body.error.message).toBe('取り込むと、無料のプランの上限（3品）を超えます。取り込みは行われませんでした')
+    })
+
+    it.each(['', ' ', '0', '-1', '1.5', '1e3', '03', 'abc', '99999999999999999999'])(
+      '使えない値（%j）は無視して 300 品にし、警告を出す',
+      async (value) => {
+        const call = createClient()
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+        expect((await call('GET', '/api/plan', { env: { FREE_PLAN_RECORD_LIMIT: value } })).body.limit).toBe(300)
+        expect(limitWarnings(warn)).toBe(1)
+      },
+    )
+
+    it('警告は、同じ値につき1回だけ出す', async () => {
+      const call = createClient()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      for (let i = 0; i < 3; i++) {
+        await call('GET', '/api/plan', { env: { FREE_PLAN_RECORD_LIMIT: '0' } })
+        await call('POST', '/api/meals', { env: { FREE_PLAN_RECORD_LIMIT: '0' }, body: base })
+      }
+      expect(limitWarnings(warn)).toBe(1)
+      await call('GET', '/api/plan', { env: { FREE_PLAN_RECORD_LIMIT: '-1' } })
+      expect(limitWarnings(warn)).toBe(2)
+    })
+
+    it('設定がなければ、警告を出さず 300 品', async () => {
+      const call = createClient()
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      expect((await call('GET', '/api/plan')).body.limit).toBe(300)
+      expect(limitWarnings(warn)).toBe(0)
+    })
+  })
+
+  it('会員（user の行）を消すと、その会員のプランの行も消える', async () => {
+    const carol = await createTestMember(authHandle, database.db, 'carol@example.com')
+    await setPlan(carol, 'paid')
+    const countPlans = async () =>
+      (await database.db.prepare('SELECT COUNT(*) AS count FROM member_plans WHERE user_id = ?').bind(carol.id).first<{ count: number }>())
+        ?.count
+    expect(await countPlans()).toBe(1)
+
+    await database.db.prepare('DELETE FROM "user" WHERE id = ?').bind(carol.id).run()
+    expect(await countPlans()).toBe(0)
+  })
+})
+
 describe('保存先の失敗', () => {
   it('D1 が失敗すると 500（MealStorageError）', async () => {
     const call = createClient()
@@ -892,6 +1209,7 @@ describe('保存先の失敗', () => {
       ['POST', '/api/meals', base],
       ['PATCH', mealPath('a'), { name: 'パン' }],
       ['DELETE', mealPath('a'), undefined],
+      ['GET', '/api/plan', undefined],
     ] as const) {
       const response = await call(method, path, { db: brokenDb, body })
       expect(response.status).toBe(500)
